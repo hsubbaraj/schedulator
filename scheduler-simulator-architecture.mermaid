@@ -1,0 +1,82 @@
+graph TB
+    subgraph Harness["Test Harness"]
+        Scenario[Scenario YAML<br/>workloads, failures, timing]
+        WorkloadDriver[Workload Driver]
+        FailureInjector[Failure Injector]
+        TimeController[Time Controller]
+    end
+
+    subgraph Simulator["Simulator Core"]
+        StateManager[State Manager<br/>Global snapshot v1689, v1690...]
+        API[API Server<br/>GET /v1/state<br/>POST /v1/placement]
+        Enforcer[Decision Enforcer<br/>3 modes: ClusterOnly/Node/Gang]
+        Metrics[Metrics Collector<br/>Utilization, Fragmentation, Churn]
+    end
+
+    subgraph Schedulers["Pluggable Schedulers (pick one)"]
+        Sched[Scheduler Logic<br/>────────────────<br/>• RandomCluster baseline<br/>• Greedy/BestFit heuristic<br/>• CP-SAT/ILP optimal<br/>• Your custom impl]
+    end
+
+    subgraph Clusters["Kubernetes Clusters (3-10)"]
+        K8S[K8s API Servers<br/>────────────────<br/>Cluster-1 us-west-2<br/>Cluster-2 us-east-1<br/>Cluster-N eu-west-1]
+        
+        Resources[Nodes & Pods<br/>────────────────<br/>• H100/A100 GPUs<br/>• Labels, Taints, Capacity<br/>• Deployments, ModelDeployments]
+        
+        InCluster[In-Cluster Schedulers<br/>────────────────<br/>• Default kube-scheduler<br/>• Custom plugins optional<br/>• Gang controllers optional]
+    end
+
+    subgraph Observability["Observability"]
+        DecisionLogs[Decision Logs<br/>append-only audit]
+        Storage[Prometheus<br/>Time-series metrics]
+        Reports[Comparison Reports<br/>Baseline vs Advanced]
+    end
+
+    %% Main flow: Harness → Simulator
+    Scenario --> WorkloadDriver
+    Scenario --> FailureInjector
+    Scenario --> TimeController
+    
+    WorkloadDriver --> StateManager
+    TimeController --> StateManager
+    
+    %% State aggregation
+    K8S -.->|Watch: nodes, pods| StateManager
+    Resources -.->|Continuous updates| StateManager
+    
+    %% Failure injection
+    FailureInjector -->|Cordon/Drain/Delete| K8S
+    
+    %% Decision loop: Simulator ↔ Scheduler
+    StateManager --> API
+    API <-->|1. GET state v1689<br/>2. POST decision v1689| Sched
+    API --> Enforcer
+    
+    %% Enforcement: Simulator → Clusters
+    Enforcer -->|ClusterOnly: Create Deployment<br/>NodePlacement: nodeAffinity<br/>Gang: PodGroup CRD| K8S
+    
+    %% In-cluster scheduling
+    K8S --> InCluster
+    InCluster --> Resources
+    
+    %% Observability flows
+    StateManager --> Metrics
+    Enforcer --> Metrics
+    Sched -.->|Explain: solver time, scores| DecisionLogs
+    
+    Metrics --> Storage
+    DecisionLogs --> Reports
+    Storage --> Reports
+    API -.->|Event stream| Reports
+
+    %% Styling
+    classDef harness fill:#ffebee,stroke:#f44336,stroke-width:2px
+    classDef simulator fill:#e1f5ff,stroke:#0066cc,stroke-width:3px
+    classDef scheduler fill:#e8f5e9,stroke:#4caf50,stroke-width:3px
+    classDef cluster fill:#fff4e1,stroke:#ff9800,stroke-width:2px
+    classDef observability fill:#f3e5f5,stroke:#9c27b0,stroke-width:2px
+
+    class Scenario,WorkloadDriver,FailureInjector,TimeController harness
+    class StateManager,API,Enforcer,Metrics simulator
+    class Sched scheduler
+    class K8S,Resources,InCluster cluster
+    class DecisionLogs,Storage,Reports observability

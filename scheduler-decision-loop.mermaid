@@ -1,0 +1,58 @@
+flowchart TB
+    Start([Scenario Start]) --> Aggregate
+
+    subgraph Loop["Decision Loop (repeats every state change)"]
+        Aggregate[📸 Aggregate State<br/>────────────────<br/>Simulator watches 3-10 K8s clusters<br/>Creates global snapshot v1689]
+        
+        Serve[📤 Serve State<br/>────────────────<br/>GET /v1/state → ClusterState JSON<br/>ETag: 1689]
+        
+        Decide[🧠 Scheduler Decides<br/>────────────────<br/>Algorithm: Greedy/CP-SAT/Custom<br/>Output: cluster-2 for 10 replicas<br/>Time: 35ms]
+        
+        Submit[📥 Submit Decision<br/>────────────────<br/>POST /v1/placement<br/>If-Match: 1689<br/>PlacementDecision JSON]
+        
+        Validate{✓ Validate<br/>────────────────<br/>State still v1689?<br/>Capacity available?<br/>No conflicts?}
+        
+        Apply[⚙️ Apply Decision<br/>────────────────<br/>Mode: ClusterOnly → Create Deployment<br/>Mode: NodePlacement → nodeAffinity<br/>Mode: Gang → PodGroup CRD]
+        
+        Schedule[☸️ K8s Schedules<br/>────────────────<br/>Default or custom schedulers<br/>place pods on nodes]
+        
+        Measure[📊 Measure Outcomes<br/>────────────────<br/>Utilization, fragmentation, churn<br/>Decision latency, recovery time<br/>Queue depth]
+        
+        Update[🔄 Update State<br/>────────────────<br/>New pods running → v1690<br/>Trigger next cycle]
+    end
+
+    Aggregate --> Serve
+    Serve --> Decide
+    Decide --> Submit
+    Submit --> Validate
+    
+    Validate -->|✅ Accept| Apply
+    Validate -->|❌ Conflict| Retry[🔁 Retry<br/>409 Conflict<br/>Scheduler refetches state]
+    Retry --> Serve
+    
+    Apply --> Schedule
+    Schedule --> Measure
+    Measure --> Update
+    Update --> Aggregate
+
+    Inject[💥 Failure Injection<br/>────────────────<br/>Cordon/Drain/Delete nodes<br/>Test resilience] -.->|Triggers state change| Update
+
+    Compare[📈 Compare Results<br/>────────────────<br/>RandomCluster vs Greedy vs CP-SAT<br/>Which scheduler wins?]
+    
+    Measure -.-> Compare
+    
+    End([Analysis Complete])
+    Compare --> End
+
+    %% Styling
+    classDef process fill:#e1f5ff,stroke:#0066cc,stroke-width:2px
+    classDef decision fill:#fff4e1,stroke:#ff9800,stroke-width:2px
+    classDef scheduler fill:#e8f5e9,stroke:#4caf50,stroke-width:2px
+    classDef output fill:#f3e5f5,stroke:#9c27b0,stroke-width:2px
+    classDef error fill:#ffebee,stroke:#f44336,stroke-width:2px
+    
+    class Aggregate,Serve,Apply,Schedule,Update process
+    class Validate decision
+    class Decide,Submit scheduler
+    class Measure,Compare output
+    class Retry,Inject error
