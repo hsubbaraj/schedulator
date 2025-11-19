@@ -37,41 +37,11 @@ status:
     reason: KubeletReady
     status: "True"
     type: Ready
-  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: kubelet has sufficient memory available
-    reason: KubeletHasSufficientMemory
-    status: "False"
-    type: MemoryPressure
-  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: kubelet has no disk pressure
-    reason: KubeletHasNoDiskPressure
-    status: "False"
-    type: DiskPressure
-  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: kubelet has sufficient PID available
-    reason: KubeletHasSufficientPID
-    status: "False"
-    type: PIDPressure
-  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: RouteController created a route
-    reason: RouteCreated
-    status: "False"
-    type: NetworkUnavailable
   nodeInfo:
     architecture: amd64
-    bootID: ""
-    containerRuntimeVersion: ""
-    kernelVersion: ""
     kubeProxyVersion: fake
     kubeletVersion: fake
-    machineID: ""
     operatingSystem: linux
-    osImage: ""
-    systemUUID: ""
   phase: Running
 ---
 apiVersion: v1
@@ -112,39 +82,54 @@ status:
     reason: KubeletReady
     status: "True"
     type: Ready
-  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: kubelet has sufficient memory available
-    reason: KubeletHasSufficientMemory
-    status: "False"
-    type: MemoryPressure
-  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: kubelet has no disk pressure
-    reason: KubeletHasNoDiskPressure
-    status: "False"
-    type: DiskPressure
-  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: kubelet has sufficient PID available
-    reason: KubeletHasSufficientPID
-    status: "False"
-    type: PIDPressure
-  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
-    lastTransitionTime: "2024-01-01T00:00:00Z"
-    message: RouteController created a route
-    reason: RouteCreated
-    status: "False"
-    type: NetworkUnavailable
   nodeInfo:
     architecture: amd64
-    bootID: ""
-    containerRuntimeVersion: ""
-    kernelVersion: ""
     kubeProxyVersion: fake
     kubeletVersion: fake
-    machineID: ""
     operatingSystem: linux
-    osImage: ""
-    systemUUID: ""
+  phase: Running
+---
+apiVersion: v1
+kind: Node
+metadata:
+  annotations:
+    kwok.x-k8s.io/node: fake
+    node.alpha.kubernetes.io/ttl: "0"
+  labels:
+    beta.kubernetes.io/arch: amd64
+    beta.kubernetes.io/os: linux
+    kubernetes.io/arch: amd64
+    kubernetes.io/hostname: kwok-node-3
+    kubernetes.io/os: linux
+    kubernetes.io/role: agent
+    node-role.kubernetes.io/agent: ""
+    gpu-type: H100
+    storage-type: shared
+    type: kwok
+  name: kwok-node-3
+spec:
+  taints: []
+status:
+  allocatable:
+    cpu: "96"
+    memory: 512Gi
+    nvidia.com/gpu: "8"
+    pods: "110"
+  capacity:
+    cpu: "96"
+    memory: 512Gi
+    nvidia.com/gpu: "8"
+    pods: "110"
+  conditions:
+  - lastHeartbeatTime: "2024-01-01T00:00:00Z"
+    lastTransitionTime: "2024-01-01T00:00:00Z"
+    message: kubelet is posting ready status
+    reason: KubeletReady
+    status: "True"
+    type: Ready
+  nodeInfo:
+    architecture: amd64
+    kubeProxyVersion: fake
+    kubeletVersion: fake
+    operatingSystem: linux
   phase: Running

@@ -15,6 +15,6 @@ kubectl apply -f "https://github.com/kubernetes-sigs/kwok/releases/download/${KW
 
 # Wait for KWOK controller to be ready
 echo "⏳ Waiting for KWOK controller to be ready..."
-kubectl wait --for=condition=ready pod -l app=kwok-controller -n kube-system --timeout=60s
+kubectl wait --for=condition=available deployment/kwok-controller -n kube-system --timeout=60s
 
 echo "✅ KWOK controller installed successfully"

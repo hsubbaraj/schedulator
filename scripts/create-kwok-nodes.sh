@@ -15,6 +15,7 @@ kubectl apply -f config/kwok-nodes.yaml
 echo "⏳ Waiting for nodes to be ready..."
 kubectl wait --for=condition=ready node kwok-node-1 --timeout=30s
 kubectl wait --for=condition=ready node kwok-node-2 --timeout=30s
+kubectl wait --for=condition=ready node kwok-node-3 --timeout=30s
 
 echo "✅ KWOK nodes created successfully"
 echo ""

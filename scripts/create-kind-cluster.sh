@@ -2,8 +2,9 @@
 set -e
 
 CLUSTER_NAME=${1:-"test-cluster"}
+HOST_PORT=${2:-30080}
 
-echo "🚀 Creating Kind cluster: ${CLUSTER_NAME}"
+echo "🚀 Creating Kind cluster: ${CLUSTER_NAME} (Port: ${HOST_PORT})"
 
 # Check if cluster already exists
 if kind get clusters 2>/dev/null | grep -q "^${CLUSTER_NAME}$"; then
@@ -19,7 +20,7 @@ nodes:
 - role: control-plane
   extraPortMappings:
   - containerPort: 30080
-    hostPort: 30080
+    hostPort: ${HOST_PORT}
     protocol: TCP
 EOF
 
