@@ -1,0 +1,45 @@
+sequenceDiagram
+    autonumber
+    participant D as Workload Driver
+    participant S as Simulator (State Manager)
+    participant SCH as Scheduler (Brain)
+    participant E as Enforcer (Hands)
+    participant K8S as K8s Cluster (Kind+KWOK)
+
+    Note over D, S: 1. Workload Injection
+    D->>S: Inject Workload (Job-A, 4 GPUs)
+    S->>S: Add Job-A to PendingQueue
+    S->>S: Increment State Version (v1 -> v2)
+
+    Note over S, SCH: 2. Decision Loop
+    loop Polling
+        SCH->>S: GET /v1/state (If-None-Match: "v1")
+        alt No Change
+            S-->>SCH: 304 Not Modified
+        else New State
+            S-->>SCH: 200 OK (State v2, Pending: [Job-A])
+        end
+    end
+
+    SCH->>SCH: Algorithm Logic (Random/Greedy)<br/>"Select Cluster-1 for Job-A"
+
+    Note over SCH, E: 3. Submission & Enforcement
+    SCH->>S: POST /v1/placement (Decision: Job-A -> Cluster-1)
+    S->>E: Validate & Enforce(Decision)
+    
+    rect rgb(240, 240, 240)
+        Note right of E: Enforcer Logic
+        E->>E: Check Version (v2 == v2?)
+        E->>E: Convert Job-A to K8s Deployment
+        E->>K8S: Create Deployment (Cluster-1)
+        K8S-->>E: 201 Created
+        E->>S: Remove Job-A from PendingQueue
+    end
+
+    S-->>SCH: 202 Accepted (Applied)
+
+    Note over K8S, S: 4. State Convergence
+    K8S->>K8S: Scheduler (default) binds Pod -> Node
+    S->>S: Watch(Pod Created)
+    S->>S: Update Cluster-1 Usage (+4 GPUs)
+    S->>S: Increment State Version (v2 -> v3)

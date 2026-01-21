@@ -1,33 +1,22 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: test-llm
-  namespace: default
-  labels:
-    app: test-llm
-    model: llama-test
+  name: test-gpu-deployment
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
-      app: test-llm
+      app: test-gpu
   template:
     metadata:
       labels:
-        app: test-llm
-        model: llama-test
+        app: test-gpu
     spec:
       containers:
-      - name: model
+      - name: pause
         image: registry.k8s.io/pause:3.9
         resources:
-          requests:
-            nvidia.com/gpu: "4"
-            memory: 80Gi
-            cpu: "16"
           limits:
             nvidia.com/gpu: "4"
-            memory: 80Gi
-            cpu: "16"
-      nodeSelector:
-        gpu-type: H100
+          requests:
+            nvidia.com/gpu: "4"

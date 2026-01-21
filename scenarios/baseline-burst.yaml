@@ -1,0 +1,27 @@
+name: baseline-burst
+duration: 10s
+workloads:
+  - delay: 0s
+    workloadId: job-burst-0
+    workload:
+      modelId: m1
+      replicas: 1
+      gpusPerReplica: 4
+  - delay: 0s
+    workloadId: job-burst-1
+    workload:
+      modelId: m2
+      replicas: 1
+      gpusPerReplica: 8
+  - delay: 0s
+    workloadId: job-burst-2
+    workload:
+      modelId: m1
+      replicas: 1
+      gpusPerReplica: 4
+  - delay: 0s
+    workloadId: job-burst-3
+    workload:
+      modelId: m3
+      replicas: 1
+      gpusPerReplica: 8

@@ -66,28 +66,28 @@
 
 ### Tasks
 
-1. **Single-cluster prototype** (3 hours)
-   - Create 1 Kind cluster
-   - Install KWOK controller
-   - Create 2 KWOK nodes with GPU capacity
-   - Manually verify nodes appear with `kubectl get nodes`
+1. Single-cluster prototype (3 hours)
+   - Create 1 Kind cluster ✅
+   - Install KWOK controller ✅
+   - Create 2 KWOK nodes with GPU capacity ✅
+   - Manually verify nodes appear with `kubectl get nodes` ✅
 
-2. **Basic state aggregation** (2 hours)
-   - Write simple Go program using client-go
-   - List nodes and their GPU capacity
-   - Print JSON to stdout
-   - Verify it matches `kubectl describe node`
+2. Basic state aggregation (2 hours)
+   - Write simple Go program using client-go ✅
+   - List nodes and their GPU capacity ✅
+   - Print JSON to stdout ✅
+   - Verify it matches `kubectl describe node` ✅
 
-3. **Manual deployment test** (2 hours)
-   - Create a Deployment with GPU requests
-   - Watch pod get scheduled by default kube-scheduler
-   - Query pod's node placement
-   - Verify GPU capacity decreases
+3. Manual deployment test (2 hours)
+   - Create a Deployment with GPU requests ✅
+   - Watch pod get scheduled by default kube-scheduler ✅
+   - Query pod's node placement ✅
+   - Verify GPU capacity decreases ✅
 
-4. **Smoke test script** (1 hour)
-   - Bash script that automates above steps
-   - Creates cluster → lists nodes → creates deployment → verifies
-   - Forms basis for CI tests later
+4. Smoke test script (1 hour)
+   - Bash script that automates above steps ✅
+   - Creates cluster → lists nodes → creates deployment → verifies ✅
+   - Forms basis for CI tests later ✅
 
 ### Deliverables
 
@@ -122,21 +122,21 @@
 ### Day 1: Project Setup & Multi-Cluster
 
 **Tasks**:
-1. Initialize Go project structure
-   - `go mod init github.com/yourorg/scheduler-simulator`
-   - Create directory structure (see design doc §5.2)
-   - Setup Makefile with common targets
+1. Initialize Go project structure ✅
+   - `go mod init github.com/yourorg/scheduler-simulator` ✅
+   - Create directory structure (see design doc §5.2) ✅
+   - Setup Makefile with common targets ✅
 
-2. Setup Kind cluster creation script
-   - Install Kind CLI
-   - Create `scripts/setup-kind.sh`
-   - Bootstrap 3 clusters: cluster-1, cluster-2, cluster-3
-   - Configure kubeconfigs
+2. Setup Kind cluster creation script ✅
+   - Install Kind CLI ✅
+   - Create `scripts/setup-kind.sh` ✅
+   - Bootstrap 3 clusters: cluster-1, cluster-2, cluster-3 ✅
+   - Configure kubeconfigs ✅
 
-3. Setup KWOK in each cluster
-   - Install KWOK controller
-   - Create KWOK node template
-   - Bootstrap 3-4 fake nodes per cluster with GPU capacity
+3. Setup KWOK in each cluster ✅
+   - Install KWOK controller ✅
+   - Create KWOK node template ✅
+   - Bootstrap 3-4 fake nodes per cluster with GPU capacity ✅
 
 **Deliverables**:
 - ✅ 3 Kind clusters running locally
@@ -158,20 +158,20 @@ kubectl --context kind-cluster-1 describe node <node-name>
 ### Day 2: State Manager Foundation
 
 **Tasks**:
-1. Implement `pkg/k8s/client/`
-   - Wrapper around client-go
-   - Multi-cluster client manager
-   - Connection pooling
+1. Implement `pkg/k8s/client/` ✅
+   - Wrapper around client-go ✅
+   - Multi-cluster client manager ✅
+   - Connection pooling ✅
 
-2. Implement `pkg/simulator/state/types.go`
-   - Define Go structs for ClusterState
-   - JSON serialization tags
-   - Validation methods
+2. Implement `pkg/simulator/state/types.go` ✅
+   - Define Go structs for ClusterState ✅
+   - JSON serialization tags ✅
+   - Validation methods ✅
 
-3. Implement basic state aggregation
-   - Watch nodes in all clusters (client-go informers)
-   - Aggregate into in-memory ClusterState
-   - Version incrementing on changes
+3. Implement basic state aggregation ✅
+   - Watch nodes in all clusters (client-go informers) ✅
+   - Aggregate into in-memory ClusterState ✅
+   - Version incrementing on changes ✅
 
 **Deliverables**:
 - ✅ Can connect to 3 Kind clusters via Go code
@@ -191,31 +191,31 @@ go run cmd/simulator/main.go --mode=state-test
 ### Day 3: State Manager - Pod Tracking & Metrics
 
 **Tasks**:
-1. Add pod watching to state aggregator
-   - Track running pods per cluster
-   - Calculate allocated resources
+1. Add pod watching to state aggregator ✅
+   - Track running pods per cluster ✅
+   - Calculate allocated resources ✅
 
-2. Implement capacity calculations (see `metrics-specification.md`)
-   - Total GPUs per cluster
-   - Allocated GPUs per cluster
-   - Free GPUs
-   - Utilization: `allocated / total`
+2. Implement capacity calculations (see `metrics-specification.md`) ✅
+   - Total GPUs per cluster ✅
+   - Allocated GPUs per cluster ✅
+   - Free GPUs ✅
+   - Utilization: `allocated / total` ✅
 
-3. Implement fragmentation calculation
-   - For each size class (1, 2, 4, 8 GPUs)
-   - Calculate packable count: `sum(node.free // N)`
-   - Calculate wasted GPUs: `free - (packable * N)`
-   - Fragmentation score: `wasted / free`
+3. Implement fragmentation calculation ✅
+   - For each size class (1, 2, 4, 8 GPUs) ✅
+   - Calculate packable count: `sum(node.free // N)` ✅
+   - Calculate wasted GPUs: `free - (packable * N)` ✅
+   - Fragmentation score: `wasted / free` ✅
 
-4. Implement state versioning
-   - Monotonic version counter
-   - ETag generation
-   - Change detection and debouncing (100ms window)
+4. Implement state versioning ✅
+   - Monotonic version counter ✅
+   - ETag generation ✅
+   - Change detection and debouncing (100ms window) ✅
 
-5. **Write unit tests**
-   - Test utilization calculation
-   - Test fragmentation for known node layouts
-   - Test version incrementing
+5. **Write unit tests** ✅
+   - Test utilization calculation ✅
+   - Test fragmentation for known node layouts ✅
+   - Test version incrementing ✅
 
 **Deliverables**:
 - ✅ State includes pods and allocations
@@ -253,28 +253,33 @@ go run cmd/simulator/main.go --mode=state-test | jq '.clusters[] | select(.id=="
 ### Day 4: HTTP API Server
 
 **Tasks**:
-1. Implement `pkg/simulator/api/server.go`
-   - HTTP server with graceful shutdown
-   - Request logging middleware
-   - CORS headers (for debugging)
+1. Implement `pkg/simulator/api/server.go` ✅
+   - HTTP server with graceful shutdown ✅
+   - Request logging middleware ✅
+   - CORS headers (for debugging) ✅
 
-2. Implement GET /v1/state handler
-   - Fetch current state from StateManager
-   - Return with ETag header
-   - Support If-None-Match (304 responses)
+2. Implement GET /v1/state handler ✅
+   - Fetch current state from StateManager ✅
+   - Return with ETag header ✅
+   - Support If-None-Match (304 responses) ✅
 
-3. Implement POST /v1/placement handler (stub)
-   - Parse PlacementDecision JSON
-   - Validate stateVersion
-   - Return 202 Accepted (enforcement comes later)
+3. Implement POST /v1/placement handler (stub) ✅
+   - Parse PlacementDecision JSON ✅
+   - Validate stateVersion ✅
+   - Return 202 Accepted (enforcement comes later) ✅
 
-4. Implement GET /v1/metrics handler (stub)
-   - Return current metrics JSON
+4. Implement GET /v1/metrics handler (stub) ✅
+   - Return current metrics JSON ✅
+
+5. Implement POST /v1/workloads handler (Added for testing) ✅
+   - Parse Workload JSON ✅
+   - Add to PendingQueue ✅
 
 **Deliverables**:
 - ✅ API server running on localhost:8080
 - ✅ GET /v1/state returns ClusterState JSON with ETag
 - ✅ POST /v1/placement accepts decisions (stub)
+- ✅ POST /v1/workloads accepts new jobs
 
 **Validation**:
 ```bash
@@ -283,12 +288,12 @@ go run cmd/simulator/main.go
 
 # In another terminal
 curl http://localhost:8080/v1/state | jq .
-curl -i http://localhost:8080/v1/state -H "If-None-Match: \"1\""
+curl -i http://localhost:8080/v1/state -H "If-None-Match: "1""
 # Should return 304 if state hasn't changed
 
 # Test placement endpoint
 curl -X POST http://localhost:8080/v1/placement \
-  -H "If-Match: \"1\"" \
+  -H "If-Match: "1"" \
   -H "Content-Type: application/json" \
   -d '{"stateVersion":"1","placementMode":"ClusterOnly","decisions":[]}'
 ```
@@ -300,26 +305,33 @@ curl -X POST http://localhost:8080/v1/placement \
 ### Day 5: Scheduler Client Library & RandomScheduler
 
 **Tasks**:
-1. Implement `pkg/scheduler/client/client.go`
-   - HTTP client for simulator API
-   - GetState() method
-   - SubmitPlacement() method
-   - Retry logic for 409 Conflicts
+1. Implement `pkg/scheduler/client/client.go` ✅
+   - HTTP client for simulator API ✅
+   - GetState() method ✅
+   - SubmitPlacement() method ✅
+   - Retry logic for 409 Conflicts ✅
 
-2. Implement RandomCluster scheduler
-   - `cmd/scheduler/random/main.go`
-   - Decision loop (poll every 5s)
-   - Random cluster selection from candidates with capacity
-   - Generate explain field
+2. Implement RandomCluster scheduler ✅
+   - `cmd/scheduler/random/main.go` ✅
+   - Decision loop (poll every 5s) ✅
+   - Random cluster selection from candidates with capacity ✅
+   - Generate explain field ✅
 
-3. Add shared types package
-   - `pkg/scheduler/types/types.go`
-   - PlacementDecision, ApplyPlacementResult structs
+3. Add shared types package ✅
+   - `pkg/scheduler/types/types.go` ✅
+   - PlacementDecision, ApplyPlacementResult structs ✅
+
+4. Manual end-to-end testing (Added) ✅
+   - Validate Infrastructure (3 Kind clusters) ✅
+   - Validate Simulator State Aggregation ✅
+   - Validate Scheduler Connection ✅
+   - Validate Submit Workload -> Schedule Loop ✅
 
 **Deliverables**:
 - ✅ Scheduler client library
 - ✅ RandomCluster scheduler binary
 - ✅ Scheduler can fetch state and submit decisions
+- ✅ Verified E2E loop (Workload -> Queue -> Scheduler -> Decision)
 
 **Validation**:
 ```bash
@@ -338,64 +350,68 @@ go run cmd/scheduler/random/main.go --simulator-url=http://localhost:8080
 
 ## Week 2: Integration & Testing (Days 6-10)
 
-### Day 6: Decision Enforcer (ClusterOnly)
+### Day 6: Decision Enforcer (ClusterOnly) ✅
 
 **Tasks**:
-1. Implement `pkg/simulator/enforcer/enforcer.go`
-   - Interface for different enforcement modes
-   - Conflict detection
-   - Transition tracking
+1. Implement `pkg/simulator/enforcer/enforcer.go` ✅
+   - Interface for different enforcement modes ✅
+   - Conflict detection ✅
+   - Transition tracking ✅
 
-2. Implement ClusterOnly enforcement
-   - Create Deployment in target cluster
-   - Set replica count
-   - Configure resource requests
-   - Set labels for tracking
+2. Implement ClusterOnly enforcement ✅
+   - Create Deployment in target cluster ✅
+   - Set replica count ✅
+   - Configure resource requests ✅
+   - Set labels for tracking ✅
 
-3. Wire up POST /v1/placement → enforcer
-   - Validate decision
-   - Apply to clusters
-   - Update state
-   - Return result
+3. Wire up POST /v1/placement → enforcer ✅
+   - Validate decision ✅
+   - Apply to clusters ✅
+   - Update state ✅
+   - Return result ✅
+
+4. Implemented comprehensive test suite: ✅
+   - Unit tests for `pkg/simulator/enforcer` ✅
+   - E2E test in `test/e2e` for full system validation ✅
+   - `make test-unit`, `make test-e2e`, `make test` commands added to Makefile ✅
 
 **Deliverables**:
 - ✅ Enforcer creates Deployments in target clusters
 - ✅ POST /v1/placement actually applies decisions
 - ✅ Can see pods appearing in clusters
+- ✅ Unit and E2E tests passing
 
 **Validation**:
 ```bash
-# Start simulator + scheduler
-# Manually add workload to pending queue (or use scenario - next day)
-# Watch pods appear in clusters
+make test
 
+# Manual verification of deployed workloads
 kubectl --context kind-cluster-1 get deployments
-kubectl --context kind-cluster-2 get pods
-kubectl --context kind-cluster-3 get pods
+# etc.
 ```
 
 **Time Estimate**: 8 hours
 
 ---
 
-### Day 7: Workload Driver & Scenario Runner
+### Day 7: Workload Driver & Scenario Runner ✅
 
 **Tasks**:
-1. Implement scenario YAML parser
-   - `pkg/simulator/workload/scenario.go`
-   - Load clusters, workloads, timing
+1. Implement scenario YAML parser ✅
+   - `pkg/simulator/workload/scenario.go` ✅
+   - Load clusters, workloads, timing ✅
 
-2. Implement workload driver
-   - `pkg/simulator/workload/driver.go`
-   - Queue workloads at specified times
-   - Add to pending queue in StateManager
-   - Remove from queue when placed
+2. Implement workload driver ✅
+   - `pkg/simulator/workload/driver.go` ✅
+   - Queue workloads at specified times ✅
+   - Add to pending queue in StateManager ✅
+   - Remove from queue when placed ✅
 
-3. Create example scenarios
-   - `scenarios/baseline-gradual.yaml`
-   - `scenarios/baseline-burst.yaml`
+3. Create example scenarios ✅
+   - `scenarios/baseline-gradual.yaml` ✅
+   - `scenarios/baseline-burst.yaml` ✅
 
-4. Wire up scenario runner to simulator main
+4. Wire up scenario runner to simulator main ✅
 
 **Deliverables**:
 - ✅ Can load scenario from YAML

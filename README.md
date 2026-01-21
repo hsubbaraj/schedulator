@@ -1,123 +1,69 @@
 # Schedulator - Multi-Cluster GPU Scheduling Simulator
 
-A testing framework for evaluating multi-cluster LLM scheduling strategies across Kubernetes clusters with heterogeneous GPU resources.
+**Schedulator** is a testing framework designed to evaluate multi-cluster LLM scheduling strategies across Kubernetes clusters with heterogeneous GPU resources. It uses **Kind** (Kubernetes in Docker) to run clusters and **KWOK** (Kubernetes WithOut Kubelet) to simulate fake GPU nodes efficiently.
 
-## Day 0 Prototype Status
+The goal is to compare different scheduling algorithms (Random, Greedy, CP-SAT) by running them against a simulated environment that mirrors real-world conditions without the heavy resource cost.
 
-✅ Project structure created  
-✅ Kind installation complete  
-✅ Scripts created for cluster setup  
-⏳ **Next: Start Docker Desktop and run cluster creation**
+## Documentation
 
-## Prerequisites
+*   **[Design Document](docs/DESIGN.md)**: Master implementation package, including architecture overview, project roadmap, and entry points to all other documentation.
+*   **[API Reference](docs/API_REFERENCE.md)**: Detailed specification of the Simulator <-> Scheduler API.
+*   **[Progress & Plan](docs/PROGRESS.md)**: Implementation status and roadmap.
+*   **[Diagrams](docs/diagrams/)**: Architecture and sequence diagrams.
 
-1. **Docker Desktop** - Must be running
-   - Download: https://www.docker.com/products/docker-desktop/
-   - **Start Docker Desktop before proceeding**
+## Quick Start
 
-2. **Kind** - ✅ Installed at `~/bin/kind`
-   - Version: v0.20.0
+### Prerequisites
 
-3. **kubectl** - Check with `kubectl version --client`
+1. **Docker** (must be running)
+2. **Kind**
+3. **kubectl**
+4. **Go 1.21+**
 
-## Quick Start (Day 0 Prototype)
+### Setup
 
-### Step 1: Start Docker Desktop
-
-**IMPORTANT:** Open Docker Desktop application and wait for it to fully start.
-
-Verify Docker is running:
 ```bash
-docker ps
+# 1. Create clusters and install KWOK
+make setup-clusters
+
+# 2. Build binaries
+make build
 ```
 
-### Step 2: Create Kind Cluster with KWOK
+### Running the Simulator
 
 ```bash
-# Set PATH to include kind
-export PATH="$HOME/bin:$PATH"
-
-# Create cluster
-./scripts/create-kind-cluster.sh test-cluster
-
-# Install KWOK controller
-./scripts/install-kwok.sh test-cluster
-
-# Create fake GPU nodes
-./scripts/create-kwok-nodes.sh test-cluster
+# Start the simulator
+./bin/simulator
 ```
 
-### Step 3: Verify Setup
+### Running the Scheduler
 
 ```bash
-# Check nodes
-kubectl get nodes
-
-# Expected output:
-# NAME           STATUS   ROLES           AGE   VERSION
-# kwok-node-1    Ready    agent           1m    fake
-# kwok-node-2    Ready    agent           1m    fake
-# test-cluster-control-plane   Ready    control-plane   2m    v1.27.3
-
-# Check GPU capacity
-kubectl get nodes -o custom-columns=NAME:.metadata.name,GPUs:.status.capacity.'nvidia\.com/gpu'
-
-# Expected output:
-# NAME           GPUs
-# kwok-node-1    8
-# kwok-node-2    8
+# Start the random scheduler (in a separate terminal)
+./bin/random-scheduler --simulator-url=http://localhost:8080
 ```
 
 ## Project Structure
 
 ```
 schedulator/
-├── scripts/
-│   ├── install-prerequisites.sh  # Install Kind and kubectl
-│   ├── create-kind-cluster.sh    # Create Kind cluster
-│   ├── install-kwok.sh           # Install KWOK controller
-│   └── create-kwok-nodes.sh      # Create fake GPU nodes
-├── config/
-│   └── kwok-nodes.yaml           # KWOK node definitions (2x H100 nodes)
-├── test/
-│   └── day0/                     # Day 0 prototype tests
-└── README.md                     # This file
+├── cmd/
+│   ├── simulator/        # Main simulator entry point
+│   └── scheduler/        # Scheduler implementations
+├── pkg/
+│   ├── simulator/        # Core simulator logic (state, api, enforcer)
+│   ├── scheduler/        # Scheduler client and logic
+│   └── k8s/              # Kubernetes client wrappers
+├── docs/                 # Design and planning documentation
+├── scripts/              # Infrastructure scripts (Kind, KWOK)
+├── scenarios/            # Test scenarios (YAML)
+└── Makefile              # Build and management commands
 ```
 
-## Next Steps (Day 0 Remaining Tasks)
+## Status
 
-1. ✅ Cluster setup scripts
-2. ⏳ Go program to aggregate state (client-go)
-3. ⏳ Manual deployment test with GPU requests
-4. ⏳ Automated smoke test script
-
-## Troubleshooting
-
-### "Cannot connect to Docker daemon"
-- **Solution:** Start Docker Desktop application and wait for it to initialize
-- Verify: `docker ps` should list containers (or show empty list)
-
-### "kind: command not found"
-- **Solution:** Add Kind to PATH: `export PATH="$HOME/bin:$PATH"`
-- Or add to shell profile: `echo 'export PATH="$HOME/bin:$PATH"' >> ~/.zshrc`
-
-### Cluster already exists
-- **Solution:** Delete and recreate: `kind delete cluster --name test-cluster`
-
-### KWOK nodes not appearing
-- **Solution:** Check KWOK controller is running: `kubectl get pods -n kube-system | grep kwok`
-
-## Design Documents
-
-- `v3.md` - Master implementation plan
-- `implementation-plan-phase1.md` - Detailed 3-week plan
-- `design-document.md` - Architecture analysis
-- `metrics-specification.md` - Fragmentation and utilization formulas
-
-## Phase 1 Goal
-
-Build a working simulator with RandomCluster scheduler in ClusterOnly mode (3 weeks).
-
----
-
-**Status:** Day 0 Prototype - Cluster setup ready, awaiting Docker start
+**Phase 1: ClusterOnly Random Scheduler**
+*   Infrastructure: Ready (Kind + KWOK)
+*   Simulator: Implemented (State, API, Enforcer)
+*   Scheduler: Implemented (RandomCluster)
