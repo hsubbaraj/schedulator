@@ -1,0 +1,75 @@
+---
+title: Scheduler Control Loop
+---
+stateDiagram-v2
+    [*] --> Idle: Scheduler starts
+
+    Idle --> EventReceived: Traffic update
+    Idle --> EventReceived: Cluster event
+    Idle --> EventReceived: SLA breach
+    Idle --> EventReceived: New app onboarded
+    Idle --> EventReceived: Timer tick (60s)
+    
+    EventReceived --> Debounce: Coalesce events
+    
+    Debounce --> AcquireLock: Debounce window expires
+    
+    AcquireLock --> SnapshotState: Lock acquired
+    AcquireLock --> Idle: Lock held by another instance
+    
+    SnapshotState --> ComputeScaling: Snapshot WorldState
+    
+    state ComputeScaling {
+        [*] --> ForEachApp
+        ForEachApp --> CalculateTarget: Next app
+        CalculateTarget --> ForEachApp: More apps
+        CalculateTarget --> [*]: All apps processed
+    }
+    
+    ComputeScaling --> ComputePlacement: Scaling decisions ready
+    
+    state ComputePlacement {
+        [*] --> ProcessScaleDowns
+        ProcessScaleDowns --> ProcessScaleUps: Free capacity first
+        ProcessScaleUps --> CheckPreemption: For each app by priority
+        CheckPreemption --> ProcessScaleUps: Continue or preempt
+        ProcessScaleUps --> OptionalRebalance: All scale-ups done
+        OptionalRebalance --> [*]: Plan ready
+    }
+    
+    ComputePlacement --> ValidatePlan: PlacementPlan generated
+    
+    ValidatePlan --> Execute: Sanity checks pass
+    ValidatePlan --> Idle: Invalid plan, log error
+    
+    state Execute {
+        [*] --> OrderOperations
+        OrderOperations --> ExecutePreemptions: Preemptions first
+        ExecutePreemptions --> ExecuteScaleDowns: Wait for termination
+        ExecuteScaleDowns --> ExecuteScaleUps: Capacity freed
+        ExecuteScaleUps --> WaitForRunning: Pods created
+        WaitForRunning --> [*]: All pods running or failed
+    }
+    
+    Execute --> ReleaseLock: Execution complete
+    
+    ReleaseLock --> LogResult: Lock released
+    
+    LogResult --> Idle: Record metrics,<br/>emit events
+
+    note right of Debounce
+        Coalesce multiple events
+        within 1-2s window to
+        prevent thrashing
+    end note
+    
+    note right of AcquireLock
+        Distributed lock for HA
+        Only leader processes events
+    end note
+    
+    note right of Execute
+        Operations dispatched
+        to cluster clients
+        in parallel where possible
+    end note

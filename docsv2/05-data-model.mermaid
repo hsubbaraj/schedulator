@@ -1,0 +1,86 @@
+---
+title: World State Data Model
+---
+erDiagram
+    CLUSTER ||--o{ NODE : contains
+    NODE ||--o{ REPLICA : hosts
+    APPLICATION ||--o{ REPLICA : "has instances"
+    APPLICATION ||--|| PERFORMANCE_PROFILE : "profiled by"
+    APPLICATION ||--|| SLA : defines
+    MODEL ||--o{ APPLICATION : "served by"
+    MODEL ||--o{ CACHE_LOCATION : "cached at"
+    NODE ||--o{ CACHE_LOCATION : stores
+
+    CLUSTER {
+        string cluster_id PK
+        string region
+        int total_gpus
+        int allocated_gpus
+        float fragmentation_score
+        string status "ready|degraded|down"
+    }
+
+    NODE {
+        string node_id PK
+        string cluster_id FK
+        int total_gpus "always 8"
+        int allocated_gpus
+        int free_gpus
+        int largest_contiguous_block
+        string status "ready|cordoned|draining|down"
+    }
+
+    APPLICATION {
+        string app_id PK
+        string model_id FK
+        int gpus_per_replica "1|2|4|8"
+        int priority "0=highest"
+        int min_replicas
+        string failure_domain_rule "spread_clusters|none"
+    }
+
+    SLA {
+        string app_id PK
+        int max_p99_ttft_ms
+        int max_p99_tps
+    }
+
+    REPLICA {
+        string replica_id PK
+        string app_id FK
+        string cluster_id FK
+        string node_id FK
+        int gpus
+        string status "pending|running|draining|terminated"
+        timestamp created_at
+    }
+
+    MODEL {
+        string model_id PK
+        string name
+        int size_gb
+    }
+
+    CACHE_LOCATION {
+        string model_id PK
+        string cluster_id PK
+        string node_id PK
+        timestamp cached_at
+    }
+
+    PERFORMANCE_PROFILE {
+        string app_id PK
+        float tps_per_replica
+        float ttft_p99_ms
+        float cold_start_seconds
+        float warm_start_seconds
+    }
+
+    TRAFFIC_METRICS {
+        string app_id PK
+        float current_qps
+        float observed_p99_ttft
+        float observed_p99_tps
+        float queue_depth
+        timestamp updated_at
+    }

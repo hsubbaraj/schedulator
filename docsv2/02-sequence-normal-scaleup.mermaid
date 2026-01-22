@@ -1,0 +1,49 @@
+---
+title: Normal Scale-Up Flow (Traffic Increase)
+---
+sequenceDiagram
+    autonumber
+    
+    participant TG as Traffic Gateway
+    participant EI as Event Ingestion
+    participant SC as Scheduler Core
+    participant WS as World State
+    participant SE as Scaling Engine
+    participant PE as Placement Engine
+    participant PX as Plan Executor
+    participant CC as Cluster Client<br/>(us-west-1)
+    participant VOL as Volcano<br/>(in-cluster)
+
+    TG->>EI: TrafficUpdate(app=X, qps=500)
+    EI->>SC: TriggerEvaluation
+    
+    SC->>WS: snapshot()
+    WS-->>SC: WorldState snapshot
+    
+    SC->>SE: compute_target(app=X, traffic, profile)
+    SE-->>SC: target=5 (was 3, need +2)
+    
+    SC->>PE: compute_placement(snapshot, targets)
+    
+    Note over PE: Find best clusters for 2 new replicas<br/>Score by: cache affinity, fragmentation, balance
+    
+    PE-->>SC: PlacementDecisions:<br/>scale_ups=[<br/>  (X, us-west-1, prefer=[node-3,node-7]),<br/>  (X, eu-central-1, prefer=[node-2])<br/>]
+    
+    SC->>PX: execute(plan)
+    
+    par Execute in parallel per cluster
+        PX->>CC: create_pod(X, constraints)
+        CC->>VOL: Pod spec with nodeAffinity
+        
+        Note over VOL: Evaluate preferred nodes<br/>Check GPU availability<br/>Bin-pack decision
+        
+        VOL->>VOL: bind(node-3)
+        VOL-->>CC: Pod scheduled on node-3
+        
+        CC->>CC: wait_for_running(timeout)
+        CC-->>PX: Pod running
+    end
+    
+    PX-->>SC: ExecutionResult: success
+    
+    Note over SC: Update internal state<br/>Log metrics

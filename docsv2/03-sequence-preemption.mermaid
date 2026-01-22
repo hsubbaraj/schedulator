@@ -1,0 +1,63 @@
+---
+title: Preemption Flow (High-Priority App Needs Resources)
+---
+sequenceDiagram
+    autonumber
+    
+    participant EV as Event Trigger
+    participant SC as Scheduler Core
+    participant WS as World State
+    participant PE as Placement Engine
+    participant PX as Plan Executor
+    participant CC as Cluster Client
+    participant VOL as Volcano
+    participant NODE as K8s Node
+
+    EV->>SC: NewApp(app=Y, priority=P0, gpus=8)
+    
+    SC->>WS: snapshot()
+    WS-->>SC: WorldState snapshot
+    
+    SC->>PE: compute_placement(targets)
+    
+    Note over PE: No 8-GPU contiguous block available<br/>Must preempt lower priority workload
+    
+    PE->>PE: find_preemption_opportunity(P0, 8 GPUs)
+    
+    Note over PE: Found: App Z (P2) has replica<br/>on node-5 using 8 GPUs<br/>Z has 3 replicas, min=2, can preempt 1
+    
+    PE-->>SC: PlacementPlan:<br/>preemptions=[(Z, replica-z-1, grace=10s)]<br/>scale_ups=[(Y, us-west-1, prefer=[node-5])]
+    
+    SC->>PX: execute(plan)
+    
+    rect rgb(255, 230, 230)
+        Note over PX,NODE: Phase 1: Preemption
+        PX->>CC: preempt(replica-z-1, grace=10s)
+        CC->>CC: label_pod(draining=true)
+        CC->>NODE: delete_pod(grace_period=10s)
+        NODE->>NODE: SIGTERM to container
+        
+        Note over NODE: Drain period: 10s<br/>Complete in-flight requests
+        
+        NODE-->>CC: Pod terminated
+        CC-->>PX: Preemption complete
+    end
+    
+    rect rgb(230, 255, 230)
+        Note over PX,NODE: Phase 2: Scale-up (after preemption)
+        PX->>CC: create_pod(Y, prefer=[node-5])
+        CC->>VOL: Pod spec with nodeAffinity<br/>preferring node-5
+        
+        Note over VOL: node-5 now has 8 free GPUs<br/>Matches preference
+        
+        VOL->>VOL: bind(node-5)
+        VOL-->>CC: Pod scheduled
+        
+        CC->>CC: wait_for_running()
+        NODE-->>CC: Pod running
+        CC-->>PX: Scale-up complete
+    end
+    
+    PX-->>SC: ExecutionResult: success
+    
+    Note over SC: P0 app Y now running<br/>P2 app Z reduced to 2 replicas
