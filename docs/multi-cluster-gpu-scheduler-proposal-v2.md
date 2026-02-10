@@ -229,7 +229,6 @@ NodeState:
   total_gpus: 8  # fixed
   allocated_gpus: int
   free_gpus: int
-  largest_contiguous_block: int  # e.g., 4 if GPUs 0-3 are free
   pods: List<PodId>
   cached_models: Set<ModelId>
   status: "ready" | "cordoned" | "draining" | "down"
@@ -310,20 +309,15 @@ ScalingHistory:
 **Fragmentation Metrics:**
 
 ```
-# Per-node fragmentation
-node_fragmentation = 1 - (largest_contiguous_block / free_gpus) if free_gpus > 0 else 0
-  # 0.0 = all free GPUs contiguous (perfect)
-  # 1.0 = maximally fragmented
-  # Example: 4 free GPUs as [2,2] blocks → 1 - 2/4 = 0.5
-  # Example: 4 free GPUs as [4] → 1 - 4/4 = 0.0
-
-# Per-cluster fragmentation (weighted average by free GPUs)
-cluster_fragmentation = sum(node.fragmentation * node.free_gpus) / sum(node.free_gpus)
+# Per-cluster fragmentation: fraction of total GPUs that are free
+cluster_fragmentation = 1 - (sum(node.free_gpus) / sum(node.total_gpus))
+  # 0.0 = all GPUs free
+  # 1.0 = all GPUs allocated
 ```
 
 **GPU Reservations:**
 
-Reservations reduce `free_gpus` and `largest_contiguous_block` in NodeState calculations. When computing available capacity, active reservations are subtracted from physical free GPUs. Reservations are cluster-scoped (not node-scoped) when using tiered scheduling, since the in-cluster scheduler picks the final node.
+Reservations reduce `free_gpus` in NodeState calculations. When computing available capacity, active reservations are subtracted from physical free GPUs. Reservations are cluster-scoped (not node-scoped) when using tiered scheduling, since the in-cluster scheduler picks the final node.
 
 **Sync Strategy:**
 
@@ -746,17 +740,17 @@ WEIGHT_BALANCE = 30         # Load distribution
 function compute_packing_score(cluster, gpus_needed):
     """
     Score how well a cluster can pack the requested GPUs.
-    Prefers tightest-fitting node (smallest contiguous block >= gpus_needed)
-    to minimize fragmentation waste.
+    Prefers tightest-fitting node (fewest free GPUs >= gpus_needed)
+    to minimize stranded capacity.
 
     Returns 0.0-1.0 where 1.0 = perfect fit (no waste).
     """
     fitting_nodes = [n for n in cluster.nodes
-                     if n.largest_contiguous_block >= gpus_needed and n.status == "ready"]
+                     if n.free_gpus >= gpus_needed and n.status == "ready"]
     if not fitting_nodes:
         return 0.0
-    best_fit = min(fitting_nodes, key=lambda n: n.largest_contiguous_block)
-    waste = best_fit.largest_contiguous_block - gpus_needed
+    best_fit = min(fitting_nodes, key=lambda n: n.free_gpus)
+    waste = best_fit.free_gpus - gpus_needed
     return 1.0 - (waste / 8)  # 0-1 score; 8 = max GPUs per node
 ```
 
