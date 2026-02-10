@@ -1,10 +1,10 @@
 ---
-title: Normal Scale-Up Flow (Traffic Increase)
+title: Normal Scale-Up Flow (High Queue Depth Detected)
 ---
 sequenceDiagram
     autonumber
-    
-    participant TG as Traffic Gateway
+
+    participant CA as Cluster Aggregator
     participant EI as Event Ingestion
     participant SC as Scheduler Core
     participant WS as World State
@@ -14,36 +14,39 @@ sequenceDiagram
     participant CC as Cluster Client<br/>(us-west-1)
     participant VOL as Volcano<br/>(in-cluster)
 
-    TG->>EI: TrafficUpdate(app=X, qps=500)
+    CA->>EI: vLLMMetrics(app=X, queue=12, kv_cache=0.85)
     EI->>SC: TriggerEvaluation
-    
+
     SC->>WS: snapshot()
     WS-->>SC: WorldState snapshot
-    
-    SC->>SE: compute_target(app=X, traffic, profile)
+
+    SC->>SE: compute_target(app=X, vllm_metrics, profile)
+
+    Note over SE: queue_depth=12 > HIGH_WATERMARK(10)<br/>kv_cache=0.85 = HIGH_WATERMARK<br/>Both signals indicate scale-up needed
+
     SE-->>SC: target=5 (was 3, need +2)
-    
+
     SC->>PE: compute_placement(snapshot, targets)
-    
-    Note over PE: Find best clusters for 2 new replicas<br/>Score by: cache affinity, fragmentation, balance
-    
-    PE-->>SC: PlacementDecisions:<br/>scale_ups=[<br/>  (X, us-west-1, prefer=[node-3,node-7]),<br/>  (X, eu-central-1, prefer=[node-2])<br/>]
-    
+
+    Note over PE: Find best clusters for 2 new replicas<br/>Score by: cache tier (dominant), fragmentation, balance
+
+    PE-->>SC: PlacementDecisions:<br/>scale_ups=[<br/>  (X, us-west-1, prefer=[node-3], cache=LOCAL_NVME),<br/>  (X, eu-central-1, prefer=[node-2], cache=GPU_MEMORY)<br/>]
+
     SC->>PX: execute(plan)
-    
+
     par Execute in parallel per cluster
         PX->>CC: create_pod(X, constraints)
         CC->>VOL: Pod spec with nodeAffinity
-        
+
         Note over VOL: Evaluate preferred nodes<br/>Check GPU availability<br/>Bin-pack decision
-        
+
         VOL->>VOL: bind(node-3)
         VOL-->>CC: Pod scheduled on node-3
-        
+
         CC->>CC: wait_for_running(timeout)
         CC-->>PX: Pod running
     end
-    
+
     PX-->>SC: ExecutionResult: success
-    
+
     Note over SC: Update internal state<br/>Log metrics

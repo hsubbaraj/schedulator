@@ -3,10 +3,14 @@ title: World State Data Model
 ---
 erDiagram
     CLUSTER ||--o{ NODE : contains
+    CLUSTER ||--o{ GPU_RESERVATION : "reserves capacity"
     NODE ||--o{ REPLICA : hosts
     APPLICATION ||--o{ REPLICA : "has instances"
     APPLICATION ||--|| PERFORMANCE_PROFILE : "profiled by"
     APPLICATION ||--|| SLA : defines
+    APPLICATION ||--|| VLLM_METRICS : "measured by"
+    APPLICATION ||--|| SCALING_HISTORY : "tracked by"
+    APPLICATION ||--o{ GPU_RESERVATION : "reserved for"
     MODEL ||--o{ APPLICATION : "served by"
     MODEL ||--o{ CACHE_LOCATION : "cached at"
     NODE ||--o{ CACHE_LOCATION : stores
@@ -27,6 +31,7 @@ erDiagram
         int allocated_gpus
         int free_gpus
         int largest_contiguous_block
+        float fragmentation "1-(largest_block/free_gpus)"
         string status "ready|cordoned|draining|down"
     }
 
@@ -64,7 +69,8 @@ erDiagram
     CACHE_LOCATION {
         string model_id PK
         string cluster_id PK
-        string node_id PK
+        string node_id PK "nullable for CLUSTER_STORAGE"
+        string tier "GPU_MEMORY|LOCAL_NVME|CLUSTER_STORAGE"
         timestamp cached_at
     }
 
@@ -76,11 +82,35 @@ erDiagram
         float warm_start_seconds
     }
 
-    TRAFFIC_METRICS {
+    VLLM_METRICS {
         string app_id PK
-        float current_qps
-        float observed_p99_ttft
-        float observed_p99_tps
-        float queue_depth
-        timestamp updated_at
+        int aggregated_from "replica count"
+        float avg_waiting_queue_depth
+        float max_waiting_queue_depth
+        float avg_running_queue_depth
+        float avg_batch_utilization
+        float avg_kv_cache_utilization
+        float max_kv_cache_utilization
+        float total_tokens_per_second
+        float avg_ttft_ms
+        float p99_ttft_ms
+        timestamp measured_at
+    }
+
+    GPU_RESERVATION {
+        string reservation_id PK
+        string cluster_id FK
+        string node_id "nullable: cluster-scoped"
+        int gpus
+        string for_app_id FK
+        timestamp created_at
+        int ttl_seconds "2x expected startup"
+        string status "active|fulfilled|expired"
+    }
+
+    SCALING_HISTORY {
+        string app_id PK
+        timestamp last_scale_up_at
+        timestamp last_scale_down_at
+        int consecutive_scale_down_signals "reset on scale-up"
     }

@@ -3,15 +3,14 @@ title: Multi-Cluster GPU Scheduler - Architecture Overview
 ---
 flowchart TB
     subgraph External["External Dependencies"]
-        TG[Traffic Gateway]
-        CA[Cluster Aggregator<br/>pods/nodes/svc/jobs]
-        CR[Cache Registry<br/>model locations]
+        CA[Cluster Aggregator<br/>pods/nodes/vLLM metrics]
+        CR[Cache Registry<br/>tiered model locations]
         PP[Performance Profiler<br/>offline metrics]
     end
 
     subgraph GlobalScheduler["Global Scheduler"]
         subgraph EventIngestion["Event Ingestion Layer"]
-            TEL[Traffic Event<br/>Listener]
+            MEL[vLLM Metrics<br/>Listener]
             CEL[Cluster Event<br/>Listener]
             SBL[SLA Breach<br/>Listener]
             TIM[Timer<br/>periodic]
@@ -21,10 +20,10 @@ flowchart TB
             subgraph WorldState["World State (in-memory)"]
                 CT[Cluster<br/>Topology]
                 AC[Application<br/>Configs]
-                CS[Cache<br/>State]
-                PRF[Performance<br/>Profiles]
+                CS[Cache State<br/>tiered]
+                VM[vLLM<br/>Metrics]
             end
-            
+
             SE[Scaling Engine<br/>How many replicas?]
             PE[Placement Engine<br/>Which cluster, what affinity?]
             PG[Plan Generator<br/>What ops to execute?]
@@ -32,7 +31,7 @@ flowchart TB
 
         subgraph PlanExecutor["Plan Executor"]
             EC[Execution Coordinator<br/>• Orders operations<br/>• Tracks in-flight<br/>• Handles rollback]
-            
+
             CC1[Cluster Client<br/>us-west-1]
             CC2[Cluster Client<br/>eu-central-1]
             CC3[Cluster Client<br/>ap-northeast]
@@ -46,14 +45,14 @@ flowchart TB
             N2[Node 8GPU]
             N3[...]
         end
-        
+
         subgraph K8s2["eu-central-1"]
             V2[Volcano<br/>In-cluster Scheduler]
             N4[Node 8GPU]
             N5[Node 8GPU]
             N6[...]
         end
-        
+
         subgraph K8s3["ap-northeast"]
             V3[Volcano<br/>In-cluster Scheduler]
             N7[Node 8GPU]
@@ -62,14 +61,14 @@ flowchart TB
         end
     end
 
-    %% External to Event Ingestion
-    TG -->|traffic signals<br/>push| TEL
+    %% External to Event Ingestion / World State
+    CA -->|vLLM metrics<br/>poll 10s| MEL
     CA -->|cluster state<br/>watch stream| CEL
-    CR -->|cache state<br/>poll| WorldState
-    PP -->|app profiles<br/>poll| WorldState
+    CR -->|cache state tiered<br/>poll 30s| WorldState
+    PP -->|app profiles<br/>poll 5m| WorldState
 
     %% Event Ingestion to Scheduler Core
-    TEL --> SE
+    MEL --> SE
     CEL --> SE
     SBL --> SE
     TIM --> SE
