@@ -17,11 +17,7 @@ erDiagram
 
     CLUSTER {
         string cluster_id PK
-        string region
-        int total_gpus
-        int allocated_gpus
         float fragmentation_score
-        string status "ready|degraded|down"
     }
 
     NODE {
@@ -30,8 +26,6 @@ erDiagram
         int total_gpus "always 8"
         int allocated_gpus
         int free_gpus
-        int largest_contiguous_block
-        float fragmentation "1-(largest_block/free_gpus)"
         string status "ready|cordoned|draining|down"
     }
 
@@ -57,7 +51,6 @@ erDiagram
         string node_id FK
         int gpus
         string status "pending|running|draining|terminated"
-        timestamp created_at
     }
 
     MODEL {
@@ -92,8 +85,8 @@ erDiagram
         float avg_kv_cache_utilization
         float max_kv_cache_utilization
         float total_tokens_per_second
-        float avg_ttft_ms
-        float p99_ttft_ms
+        float avg_time_to_first_token_ms
+        float p99_time_to_first_token_ms
         timestamp measured_at
     }
 
