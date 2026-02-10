@@ -1,0 +1,80 @@
+---
+title: Placement Engine Decision Flow
+---
+flowchart TD
+    START([Start Placement]) --> DELTA[Compute replica deltas<br/>for each application]
+
+    DELTA --> SCALEDOWN{Any apps need<br/>scale-down?}
+
+    SCALEDOWN -->|Yes| SELECTVICTIMS[Select replicas to remove<br/>Prefer: high fragmentation nodes,<br/>non-cached, over-represented clusters]
+    SELECTVICTIMS --> ADDSD[Add to scale_downs list]
+    ADDSD --> SCALEDOWN
+
+    SCALEDOWN -->|No| SCALEUP{Any apps need<br/>scale-up?}
+
+    SCALEUP -->|No| REBALANCE{Rebalancing<br/>opportunity?}
+
+    SCALEUP -->|Yes| SORTAPPS[Sort apps by priority<br/>P0 first]
+    SORTAPPS --> NEXTAPP{Next app<br/>needing replicas?}
+
+    NEXTAPP -->|None| REBALANCE
+    NEXTAPP -->|Yes| FINDCLUSTER[Find best cluster]
+
+    FINDCLUSTER --> CANDIDATES[Filter clusters with<br/>sufficient contiguous GPUs]
+
+    CANDIDATES --> HASCANDIDATE{Any valid<br/>clusters?}
+
+    HASCANDIDATE -->|Yes| SCORE[Score candidates]
+
+    subgraph Scoring["Scoring Function (cache-tier dominant)"]
+        SCORE --> S1[Cache tier score<br/>GPU_MEM=1000, NVME=500,<br/>CLUSTER=100, REMOTE=0]
+        S1 --> S2["compute_packing_score()<br/>Tightest-fit node scoring<br/>waste = block - needed<br/>score = 1 - waste/8<br/>× WEIGHT_FRAGMENTATION (50)"]
+        S2 --> S3[Utilization balance<br/>+30 for less-loaded]
+        S3 --> S4[Failure domain<br/>check spreading rules]
+    end
+
+    S4 --> SELECTBEST[Select highest-scoring cluster]
+    SELECTBEST --> CONSTRAINTS[Generate scheduling constraints<br/>preferred_nodes, cache_affinity]
+    CONSTRAINTS --> ADDSU[Add to scale_ups list]
+    ADDSU --> CREATE_RESERVATION["Create GPU reservation<br/>cluster-scoped, TTL = 2× startup<br/>Reduces available capacity<br/>in working state"]
+    CREATE_RESERVATION --> NEXTAPP
+
+    HASCANDIDATE -->|No| PREEMPT{Can preempt<br/>lower priority?}
+
+    PREEMPT -->|No| LOGWARN[Log warning:<br/>cannot place replica]
+    LOGWARN --> NEXTAPP
+
+    PREEMPT -->|Yes| FINDVICTIM[Find preemption victims]
+
+    subgraph PreemptionLogic["Preemption Selection (Cascade Policy)"]
+        FINDVICTIM --> PV1[Try P2 victims first]
+        PV1 --> PV2[Filter: above min_replicas]
+        PV2 --> PV3[Sort by: packing benefit DESC]
+        PV3 --> PV4[Select enough to free<br/>required GPUs]
+        PV4 --> PV5{Enough freed<br/>from P2?}
+        PV5 -->|Yes| ADDPREEMPT
+        PV5 -->|No, requester=P0| PV6[Escalate: try P1 victims]
+        PV5 -->|No, requester=P1| LOGWARN
+        PV6 --> PV2
+    end
+
+    PV4 --> ADDPREEMPT[Add to preemptions list]
+    ADDPREEMPT --> MARKFREED[Mark victim GPUs as<br/>will-be-freed]
+    MARKFREED --> SCORE
+
+    REBALANCE -->|No| DONE([Return PlacementPlan])
+
+    subgraph RebalancingEngine["Rebalancing (Blue-Green Migration)"]
+        REBALANCE -->|Yes| FRAGCHECK[Identify nodes with<br/>high fragmentation]
+        FRAGCHECK --> FINDTARGET[Find consolidation target<br/>in same or other cluster]
+        FINDTARGET --> CHECKBUDGET{Migrations <br/>< MAX_MIGRATIONS_PER_CYCLE?}
+        CHECKBUDGET -->|No| DONE
+        CHECKBUDGET -->|Yes| CHECKDELTA{Fragmentation<br/>improvement ><br/>MIN_FRAG_DELTA?}
+        CHECKDELTA -->|No| DONE
+        CHECKDELTA -->|Yes| CHECKCACHE{Destination has<br/>cached model?}
+        CHECKCACHE -->|No, skip| FRAGCHECK
+        CHECKCACHE -->|Yes| CHECKMIN{App stays above<br/>min_replicas<br/>during migration?}
+        CHECKMIN -->|No, skip| FRAGCHECK
+        CHECKMIN -->|Yes| ADDMIGRATE["Add MigrateDecision<br/>(scale-up new → scale-down old)<br/>Prefer lower-priority apps"]
+        ADDMIGRATE --> FRAGCHECK
+    end

@@ -3,7 +3,7 @@ title: Background State Sync Loop
 ---
 sequenceDiagram
     autonumber
-    
+
     participant CA as Cluster Aggregator
     participant CR as Cache Registry
     participant PP as Performance Profiler
@@ -14,27 +14,37 @@ sequenceDiagram
 
     rect rgb(230, 240, 255)
         Note over CA,SS: Watch Stream (continuous)
-        
+
         loop On every cluster event
             CA->>SS: PodEvent(pod-xyz, Running, node-5)
             SS->>WS: upsert_replica(pod-xyz, node-5, Running)
-            
+
             CA->>SS: NodeEvent(node-3, GPUs: 4 allocated)
             SS->>WS: update_node(node-3, allocated=4)
         end
     end
 
+    rect rgb(230, 255, 230)
+        Note over CA,SS: vLLM Metrics (every 10s)
+
+        SS->>CA: get_vllm_metrics()
+        CA-->>SS: vLLMMetrics per app:<br/>app-X: {queue=3, kv_cache=0.6, batch=0.7}<br/>app-Y: {queue=12, kv_cache=0.9, batch=0.85}
+        SS->>WS: update_vllm_metrics(metrics)
+
+        Note over WS: High queue/cache pressure<br/>triggers scaling evaluation
+    end
+
     rect rgb(255, 245, 230)
-        Note over CR,SS: Poll (every 30s)
-        
+        Note over CR,SS: Cache Registry Poll (every 30s)
+
         SS->>CR: get_cache_state()
-        CR-->>SS: CacheState:<br/>model-A: [node-1, node-5]<br/>model-B: [node-2, node-8]
+        CR-->>SS: CacheState (tiered):<br/>model-A: [{node-1, LOCAL_NVME}, {node-5, GPU_MEMORY}]<br/>model-B: [{cluster-1, CLUSTER_STORAGE}]
         SS->>WS: update_cache_locations(cache_state)
     end
 
     rect rgb(240, 255, 240)
-        Note over PP,SS: Poll (every 5m)
-        
+        Note over PP,SS: Performance Profiles (every 5m)
+
         SS->>PP: get_performance_profiles()
         PP-->>SS: Profiles:<br/>app-X: {tps=100, ttft=50ms, cold=60s}<br/>app-Y: {tps=80, ttft=70ms, cold=45s}
         SS->>WS: update_profiles(profiles)
@@ -42,10 +52,10 @@ sequenceDiagram
 
     rect rgb(250, 240, 255)
         Note over CA,SS: Full Reconcile (every 5m)
-        
+
         SS->>CA: get_full_cluster_state()
         CA-->>SS: FullState: all clusters, nodes, pods
         SS->>WS: reconcile_all(full_state)
-        
+
         Note over WS: Detect and fix any drift<br/>between World State and reality
     end
