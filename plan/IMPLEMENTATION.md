@@ -255,7 +255,7 @@ This ensures alignment before writing code. The section descriptions below are s
 
 ---
 
-### Section 05 — K8s Test Infrastructure
+### Section 05 — K8s Test Infrastructure ✅ DONE
 
 **Pre-impl doc:** `plan/05-k8s-test-infra.md`
 
@@ -289,7 +289,7 @@ This ensures alignment before writing code. The section descriptions below are s
 
 ---
 
-### Section 06 — Event Ingestion Layer
+### Section 06 — Event Ingestion Layer ✅ DONE
 
 **Pre-impl doc:** `plan/06-event-ingestion.md`
 
@@ -330,7 +330,7 @@ This ensures alignment before writing code. The section descriptions below are s
 
 ---
 
-### Section 07 — Scaling Engine
+### Section 07 — Scaling Engine ✅ DONE
 
 **Pre-impl doc:** `plan/07-scaling-engine.md`
 

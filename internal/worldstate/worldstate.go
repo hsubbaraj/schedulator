@@ -306,6 +306,19 @@ func (ws *WorldState) RecordScaleEvent(appID model.AppID, direction string, at t
 	ws.scalingHistory[appID] = h
 }
 
+// IncrementScaleDownSignal increments the consecutive scale-down signal
+// counter for an application without updating the last-scale-down timestamp.
+// This is used by the control loop when the scaling engine observes a
+// scale-down signal that is suppressed by the stabilization window.
+func (ws *WorldState) IncrementScaleDownSignal(appID model.AppID) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	h := ws.scalingHistory[appID]
+	h.AppID = appID
+	h.ConsecutiveScaleDownSignals++
+	ws.scalingHistory[appID] = h
+}
+
 // ExpireStaleReservations scans all active reservations and expires those whose
 // TTL has elapsed relative to now. Returns the number of expired reservations.
 func (ws *WorldState) ExpireStaleReservations(now time.Time) int {
