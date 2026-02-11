@@ -141,7 +141,7 @@ This ensures alignment before writing code. The section descriptions below are s
 
 ---
 
-### Section 02 — Observability Foundation
+### Section 02 — Observability Foundation ✅ DONE
 
 **Pre-impl doc:** `plan/02-observability-foundation.md`
 
@@ -170,7 +170,7 @@ This ensures alignment before writing code. The section descriptions below are s
 
 ---
 
-### Section 03 — Core Data Model / World State
+### Section 03 — Core Data Model / World State ✅ DONE
 
 **Pre-impl doc:** `plan/03-core-data-model.md`
 
