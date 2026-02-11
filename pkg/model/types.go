@@ -58,6 +58,7 @@ type Replica struct {
 	NodeID    NodeID
 	GPUs      int
 	Status    ReplicaStatus
+	CreatedAt time.Time
 }
 
 // Model represents an LLM model artifact.
