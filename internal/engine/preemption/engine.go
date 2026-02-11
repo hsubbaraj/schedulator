@@ -66,7 +66,7 @@ func (e *PreemptionEngine) FindPreemptionOpportunity(
 	app model.Application,
 	snap worldstate.WorldStateSnapshot,
 ) (*model.PreemptionPlan, error) {
-	ctx, span := e.tracer.Start(ctx, "preemption.find_opportunity",
+	_, span := e.tracer.Start(ctx, "preemption.find_opportunity",
 		trace.WithAttributes(
 			attribute.String("requesting_app.id", app.AppID),
 			attribute.Int("requesting_app.priority", app.Priority),
