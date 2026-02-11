@@ -218,7 +218,7 @@ This ensures alignment before writing code. The section descriptions below are s
 
 ---
 
-### Section 04 — External Dependency Interfaces & Mocks
+### Section 04 — External Dependency Interfaces & Mocks ✅ DONE
 
 **Pre-impl doc:** `plan/04-external-interfaces.md`
 

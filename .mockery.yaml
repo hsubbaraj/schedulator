@@ -1,0 +1,8 @@
+with-expecter: true
+dir: "{{.InterfaceDir}}/mocks"
+outpkg: mocks
+all: true
+packages:
+  github.com/hsubbaraj/schedulator/pkg/ports:
+    config:
+      dir: pkg/ports/mocks
