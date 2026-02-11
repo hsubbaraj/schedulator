@@ -110,7 +110,7 @@ This ensures alignment before writing code. The section descriptions below are s
 
 ---
 
-### Section 01 — Project Scaffolding
+### Section 01 — Project Scaffolding ✅ DONE
 
 **Pre-impl doc:** `plan/01-project-scaffolding.md`
 
