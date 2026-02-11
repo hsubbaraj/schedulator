@@ -31,7 +31,7 @@ func newMux(reg *prometheus.Registry) *http.ServeMux {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
-		json.NewEncoder(w).Encode(healthResponse{Status: "ok"})
+		_ = json.NewEncoder(w).Encode(healthResponse{Status: "ok"})
 	})
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	return mux

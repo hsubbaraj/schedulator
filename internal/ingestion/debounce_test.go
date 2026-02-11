@@ -31,17 +31,6 @@ func readBatch(t *testing.T, outCh <-chan []Event, timeout time.Duration) []Even
 	}
 }
 
-// waitClosed waits for the channel to close within timeout.
-func waitClosed(t *testing.T, outCh <-chan []Event, timeout time.Duration) {
-	t.Helper()
-	select {
-	case _, ok := <-outCh:
-		assert.False(t, ok, "expected channel to be closed")
-	case <-time.After(timeout):
-		t.Fatal("timed out waiting for channel close")
-	}
-}
-
 func TestDebouncer_MergesMetricsUpdates(t *testing.T) {
 	d := newTestDebouncer()
 	inCh := make(chan Event, 10)

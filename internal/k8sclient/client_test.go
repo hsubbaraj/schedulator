@@ -20,7 +20,7 @@ const testClusterID = "test-cluster"
 
 func newTestClient(t *testing.T) (*Client, *fake.Clientset) {
 	t.Helper()
-	cs := fake.NewSimpleClientset()
+	cs := fake.NewClientset()
 	reg := prometheus.NewRegistry()
 	tracer := observability.NewNoopTracer()
 	c := New(cs, testNamespace, testClusterID, tracer, reg)
@@ -211,7 +211,7 @@ func TestLabelReplica_AddsLabels(t *testing.T) {
 }
 
 func TestCreateReplica_TracesSpan(t *testing.T) {
-	cs := fake.NewSimpleClientset()
+	cs := fake.NewClientset()
 	reg := prometheus.NewRegistry()
 	tracer, exp := observability.NewTestTracer()
 	c := New(cs, testNamespace, testClusterID, tracer, reg)
@@ -234,7 +234,7 @@ func TestCreateReplica_TracesSpan(t *testing.T) {
 }
 
 func TestCreateReplica_RecordsMetrics(t *testing.T) {
-	cs := fake.NewSimpleClientset()
+	cs := fake.NewClientset()
 	reg := prometheus.NewRegistry()
 	tracer := observability.NewNoopTracer()
 	c := New(cs, testNamespace, testClusterID, tracer, reg)
