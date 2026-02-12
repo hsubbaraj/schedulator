@@ -204,8 +204,16 @@ func (e *PreemptionEngine) selectVictims(
 
 // sortCandidates sorts victim candidates by preemption preference:
 // 1. Above min_replicas first (above_minimum = 0, at_minimum = 1)
-// 2. Higher packing benefit first (better GPU match)
+// 2. Cluster with most freeable GPUs first (same-cluster grouping)
+// 3. Higher packing benefit first (better GPU match)
+// 4. ReplicaID for determinism
 func sortCandidates(candidates []victimCandidate, gpusNeeded int, snap worldstate.WorldStateSnapshot) {
+	// Pre-compute total freeable GPUs per cluster for cluster-preference sorting.
+	clusterGPUs := make(map[model.ClusterID]int)
+	for _, c := range candidates {
+		clusterGPUs[c.replica.ClusterID] += c.replica.GPUs
+	}
+
 	sort.SliceStable(candidates, func(i, j int) bool {
 		ci, cj := candidates[i], candidates[j]
 		aboveI := aboveMinOrder(ci, snap)
@@ -213,7 +221,22 @@ func sortCandidates(candidates []victimCandidate, gpusNeeded int, snap worldstat
 		if aboveI != aboveJ {
 			return aboveI < aboveJ
 		}
-		return packingBenefit(ci.replica.GPUs, gpusNeeded) > packingBenefit(cj.replica.GPUs, gpusNeeded)
+		// Prefer cluster with more freeable capacity.
+		cgI := clusterGPUs[ci.replica.ClusterID]
+		cgJ := clusterGPUs[cj.replica.ClusterID]
+		if cgI != cgJ {
+			return cgI > cgJ
+		}
+		// Group by cluster for same-cluster selection.
+		if ci.replica.ClusterID != cj.replica.ClusterID {
+			return ci.replica.ClusterID < cj.replica.ClusterID
+		}
+		pbI := packingBenefit(ci.replica.GPUs, gpusNeeded)
+		pbJ := packingBenefit(cj.replica.GPUs, gpusNeeded)
+		if pbI != pbJ {
+			return pbI > pbJ
+		}
+		return ci.replica.ReplicaID < cj.replica.ReplicaID
 	})
 }
 
