@@ -8,6 +8,11 @@ flowchart TB
         PP[Performance Profiler<br/>offline metrics]
     end
 
+    subgraph Concrete["Concrete Implementations"]
+        K8sAgg[K8s Aggregator<br/>client-go Informers<br/>Nodes + Pods watch]
+        YAMLStore[YAML ConfigStore<br/>fsnotify file watcher<br/>apps.yaml]
+    end
+
     subgraph GlobalScheduler["Global Scheduler"]
         subgraph EventIngestion["Event Ingestion Layer"]
             MEL[vLLM Metrics<br/>Listener]
@@ -26,8 +31,11 @@ flowchart TB
 
             SE[Scaling Engine<br/>How many replicas?]
             PE[Placement Engine<br/>Which cluster, what affinity?]
+            RE[Rebalancing Engine<br/>Consolidate fragmentation]
             PG[Plan Generator<br/>What ops to execute?]
         end
+
+        CL[Control Loop<br/>Orchestrates full cycle<br/>Leader election gated]
 
         subgraph PlanExecutor["Plan Executor"]
             EC[Execution Coordinator<br/>• Orders operations<br/>• Tracks in-flight<br/>• Handles rollback]
@@ -35,6 +43,12 @@ flowchart TB
             CC1[Cluster Client<br/>us-west-1]
             CC2[Cluster Client<br/>eu-central-1]
             CC3[Cluster Client<br/>ap-northeast]
+        end
+
+        subgraph Observability["Observability & API"]
+            API[HTTP API Server<br/>REST + SSE stream]
+            EL[Event Log<br/>SQLite persistence]
+            DASH[React Dashboard<br/>Fleet visualization]
         end
     end
 
@@ -61,23 +75,35 @@ flowchart TB
         end
     end
 
+    %% Concrete implementations fulfill interfaces
+    K8sAgg -.->|implements<br/>ClusterAggregator| CA
+    YAMLStore -.->|implements<br/>ConfigStore| AC
+
     %% External to Event Ingestion / World State
     CA -->|vLLM metrics<br/>poll 10s| MEL
     CA -->|cluster state<br/>watch stream| CEL
     CR -->|cache state tiered<br/>poll 30s| WorldState
     PP -->|app profiles<br/>poll 5m| WorldState
 
-    %% Event Ingestion to Scheduler Core
-    MEL --> SE
-    CEL --> SE
-    SBL --> SE
-    TIM --> SE
+    %% Event Ingestion to Control Loop
+    MEL --> CL
+    CEL --> CL
+    SBL --> CL
+    TIM --> CL
+
+    %% Control Loop orchestrates engines
+    CL --> SE
+    CL --> PE
+    CL --> RE
+    CL --> PG
 
     %% Scheduler Core flow
     WorldState --> SE
     WorldState --> PE
+    WorldState --> RE
     SE --> PE
     PE --> PG
+    RE --> PG
 
     %% Plan Executor
     PG --> EC
@@ -97,3 +123,10 @@ flowchart TB
     V2 --> N5
     V3 --> N7
     V3 --> N8
+
+    %% Observability connections
+    CL -->|events + snapshots| EL
+    CL -->|publish events| API
+    WorldState -->|snapshot| API
+    EL -->|history + time-series| API
+    API -->|SSE + REST| DASH

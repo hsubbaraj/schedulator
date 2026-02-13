@@ -73,6 +73,7 @@ deploy/kind/             # kind + KWOK configs
 - Coverage target: 80%+ on `internal/`; 100% on `engine/scaling`, `engine/placement`, `engine/preemption`.
 - Always run tests with `-race`. No data races allowed.
 - Do not use `time.Sleep` in tests — use polling helpers or channels.
+- When running tests locally on Mac, set CGO_ENABLED=0.
 
 ### K8s Replica Model
 - Replicas are **single-replica Deployments**, not raw pods and not multi-replica Deployments. Each replica gets its own Deployment with a unique name (e.g., `app-X-replica-a1b2`) and its own pod template with per-replica scheduling constraints.
