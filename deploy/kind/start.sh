@@ -6,7 +6,26 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 
 CLUSTER_1="schedulator-1"
 CLUSTER_2="schedulator-2"
+KWOK_RELEASE="v0.7.0"
 
+# --- Pre-flight checks ---
+for cmd in kind kubectl docker jq go; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "ERROR: '$cmd' is required but not found in PATH." >&2
+    exit 1
+  fi
+done
+
+# Kind >= 0.20.0 is needed for kindest/node:v1.31.x images.
+KIND_VERSION=$(kind version | grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+KIND_MINOR=$(echo "$KIND_VERSION" | cut -d. -f2)
+if [ "${KIND_MINOR:-0}" -lt 20 ]; then
+  echo "ERROR: kind $KIND_VERSION is too old. Please upgrade to kind >= v0.20.0" >&2
+  echo "       brew install kind   OR   go install sigs.k8s.io/kind@latest" >&2
+  exit 1
+fi
+
+echo "==> Pre-flight OK (kind $KIND_VERSION, kwok $KWOK_RELEASE)"
 echo "==> Creating Kind clusters..."
 
 for CLUSTER in "$CLUSTER_1" "$CLUSTER_2"; do
@@ -20,7 +39,6 @@ done
 echo "==> Installing KWOK in clusters..."
 
 KWOK_REPO=kubernetes-sigs/kwok
-KWOK_RELEASE=$(curl -s "https://api.github.com/repos/${KWOK_REPO}/releases/latest" | jq -r '.tag_name')
 
 for CLUSTER in "$CLUSTER_1" "$CLUSTER_2"; do
   CTX="kind-${CLUSTER}"
@@ -78,4 +96,4 @@ echo "    Dashboard: http://localhost:${PORT}"
 echo ""
 
 cd "$PROJECT_ROOT"
-go run ./cmd/schedulator/
+CGO_ENABLED=0 go run ./cmd/schedulator/

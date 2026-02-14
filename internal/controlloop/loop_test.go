@@ -200,6 +200,14 @@ func (m *mockWorldState) ExpireStaleReservations(_ time.Time) int {
 	return 0
 }
 
+func (m *mockWorldState) UpdateVLLMMetrics(_ model.VLLMMetrics)                        {}
+func (m *mockWorldState) UpsertCluster(_ model.Cluster)                                {}
+func (m *mockWorldState) UpsertNode(_ model.Node)                                      {}
+func (m *mockWorldState) RemoveNode(_ model.ClusterID, _ model.NodeID)                 {}
+func (m *mockWorldState) UpsertApplication(_ model.Application)                        {}
+func (m *mockWorldState) UpsertReplica(_ model.Replica)                                {}
+func (m *mockWorldState) DeleteReplica(_ model.ReplicaID)                              {}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

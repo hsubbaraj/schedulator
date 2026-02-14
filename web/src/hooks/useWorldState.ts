@@ -25,7 +25,7 @@ export function useWorldState() {
       const res = await fetch(`${API_BASE}/events/history?limit=50`);
       if (res.ok) {
         const data: EventRecord[] = await res.json();
-        setEvents(data);
+        setEvents(data || []);
       }
     } catch {
       // Silent fail.

@@ -117,6 +117,18 @@ func (c *Client) createReplica(ctx context.Context, appID model.AppID, constrain
 							},
 						},
 					},
+					Tolerations: []corev1.Toleration{
+						{
+							Key:      "kwok.x-k8s.io/node",
+							Operator: corev1.TolerationOpExists,
+							Effect:   corev1.TaintEffectNoSchedule,
+						},
+						{
+							Key:      "nvidia.com/gpu",
+							Operator: corev1.TolerationOpExists,
+							Effect:   corev1.TaintEffectNoSchedule,
+						},
+					},
 				},
 			},
 		},
