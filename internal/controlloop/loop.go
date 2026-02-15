@@ -2,6 +2,8 @@ package controlloop
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"time"
 
@@ -10,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hsubbaraj/schedulator/internal/engine/scaling"
+	"github.com/hsubbaraj/schedulator/internal/eventlog"
 	"github.com/hsubbaraj/schedulator/internal/ingestion"
 	"github.com/hsubbaraj/schedulator/internal/observability"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
@@ -83,6 +86,8 @@ type ControlLoop struct {
 	worldState      worldStateManager
 	leaderElector   ports.LeaderElector
 	tracer          trace.Tracer
+	publisher       cycleSummaryPublisher // optional; may be nil
+	eventLogger     cycleEventLogger      // optional; may be nil
 
 	cyclesTotal     *prometheus.CounterVec
 	cycleDuration   prometheus.Histogram
@@ -91,6 +96,8 @@ type ControlLoop struct {
 }
 
 // NewControlLoop creates a ControlLoop with all dependencies injected.
+// publisher and eventLogger are optional — pass nil to disable cycle summary
+// publishing or event logging.
 func NewControlLoop(
 	cfg ControlLoopConfig,
 	ingester eventSource,
@@ -101,6 +108,8 @@ func NewControlLoop(
 	executor planExecutor,
 	worldState worldStateManager,
 	leaderElector ports.LeaderElector,
+	publisher cycleSummaryPublisher,
+	eventLogger cycleEventLogger,
 	tracer trace.Tracer,
 	reg prometheus.Registerer,
 ) *ControlLoop {
@@ -118,6 +127,8 @@ func NewControlLoop(
 		executor:        executor,
 		worldState:      worldState,
 		leaderElector:   leaderElector,
+		publisher:       publisher,
+		eventLogger:     eventLogger,
 		tracer:          tracer,
 
 		cyclesTotal: observability.MustNewCounterVec(reg, prometheus.CounterOpts{
@@ -279,7 +290,142 @@ func (cl *ControlLoop) runCycle(ctx context.Context, events []ingestion.Event) e
 	cl.cyclesTotal.WithLabelValues(outcome).Inc()
 	cl.cycleDuration.Observe(time.Since(start).Seconds())
 
+	// 12. Publish cycle summary and log events
+	summary := cl.buildCycleSummary(events, scalingDecisions, placements, plan, result, durationMs)
+	cl.publishAndLog(ctx, summary, plan, result, placements)
+
 	return nil
+}
+
+// buildCycleSummary constructs a CycleSummary from the cycle's computed data.
+func (cl *ControlLoop) buildCycleSummary(
+	events []ingestion.Event,
+	scalingDecisions map[model.AppID]scaling.ScalingDecision,
+	placements model.PlacementDecisions,
+	plan model.ExecutionPlan,
+	result model.ExecutionResult,
+	durationMs int64,
+) CycleSummary {
+	// Deduplicate trigger kinds.
+	kindSet := make(map[ingestion.EventKind]struct{})
+	for _, ev := range events {
+		kindSet[ev.Kind] = struct{}{}
+	}
+	triggerKinds := make([]ingestion.EventKind, 0, len(kindSet))
+	for k := range kindSet {
+		triggerKinds = append(triggerKinds, k)
+	}
+
+	// Build failed ops with string errors.
+	failedOps := make([]failedOpJSON, 0, len(result.Failed))
+	for _, f := range result.Failed {
+		errStr := ""
+		if f.Err != nil {
+			errStr = f.Err.Error()
+		}
+		failedOps = append(failedOps, failedOpJSON{
+			OperationID: f.OperationID,
+			Type:        string(f.Type),
+			Err:         errStr,
+		})
+	}
+
+	return CycleSummary{
+		TriggerKinds:     triggerKinds,
+		ScalingDecisions: scalingDecisions,
+		Placement: PlacementSummary{
+			ScaleUpCount:    len(placements.ScaleUps),
+			ScaleDownCount:  len(placements.ScaleDowns),
+			PreemptionCount: len(placements.Preemptions),
+			ScaleUps:        placements.ScaleUps,
+			ScaleDowns:      placements.ScaleDowns,
+			Preemptions:     placements.Preemptions,
+		},
+		Execution: ExecutionSummary{
+			CompletedCount: len(result.Completed),
+			FailedCount:    len(result.Failed),
+			AbortedCount:   len(result.Aborted),
+			Completed:      result.Completed,
+			Failed:         failedOps,
+			Aborted:        result.Aborted,
+		},
+		CycleDurationMs: durationMs,
+	}
+}
+
+// publishAndLog publishes the cycle summary via SSE and logs individual
+// operations to the event store.
+func (cl *ControlLoop) publishAndLog(
+	ctx context.Context,
+	summary CycleSummary,
+	plan model.ExecutionPlan,
+	result model.ExecutionResult,
+	placements model.PlacementDecisions,
+) {
+	if cl.publisher != nil {
+		cl.publisher.PublishCycleSummary(summary)
+	}
+
+	if cl.eventLogger == nil {
+		return
+	}
+
+	// Build a set of completed operation IDs for lookup.
+	completedSet := make(map[model.OperationID]struct{}, len(result.Completed))
+	for _, id := range result.Completed {
+		completedSet[id] = struct{}{}
+	}
+
+	// Log individual completed operations.
+	now := time.Now()
+	for _, op := range plan.Operations {
+		if _, ok := completedSet[op.ID]; !ok {
+			continue
+		}
+		var rec eventlog.EventRecord
+		rec.Timestamp = now
+		switch op.Type {
+		case model.OperationScaleUp:
+			if su, ok := op.Payload.(model.ScaleUpDecision); ok {
+				rec.Type = "scale_up"
+				rec.AppID = su.AppID
+				rec.ClusterID = su.ClusterID
+				rec.Summary = fmt.Sprintf("Scaled up %s in %s", su.AppID, su.ClusterID)
+			}
+		case model.OperationScaleDown:
+			if sd, ok := op.Payload.(model.ScaleDownDecision); ok {
+				rec.Type = "scale_down"
+				rec.AppID = sd.AppID
+				rec.Summary = fmt.Sprintf("Scaled down replica %s of %s", sd.ReplicaID, sd.AppID)
+			}
+		case model.OperationPreempt:
+			if p, ok := op.Payload.(model.PreemptionDecision); ok {
+				rec.Type = "preempt"
+				rec.AppID = p.VictimAppID
+				rec.ClusterID = p.ClusterID
+				rec.Summary = fmt.Sprintf("Preempted %s on %s: %s", p.VictimReplicaID, p.ClusterID, p.Reason)
+			}
+		default:
+			continue
+		}
+		if rec.Type == "" {
+			continue
+		}
+		if err := cl.eventLogger.LogEvent(ctx, rec); err != nil {
+			slog.WarnContext(ctx, "failed to log event", "type", rec.Type, "error", err)
+		}
+	}
+
+	// Log a cycle_complete event.
+	detailJSON, _ := json.Marshal(summary)
+	if err := cl.eventLogger.LogEvent(ctx, eventlog.EventRecord{
+		Timestamp:  now,
+		Type:       "cycle_complete",
+		Summary:    fmt.Sprintf("+%d scale-up, -%d scale-down, %d preempt", len(placements.ScaleUps), len(placements.ScaleDowns), len(placements.Preemptions)),
+		DetailJSON: string(detailJSON),
+	}); err != nil {
+		slog.WarnContext(ctx, "failed to log cycle_complete", "error", err)
+	}
 }
 
 // applyEvents processes ingested events and applies them to world state so that

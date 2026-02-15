@@ -1,16 +1,21 @@
 import { useWorldState } from './hooks/useWorldState';
+import HeroStrip from './components/HeroStrip';
 import ClusterCard from './components/ClusterCard';
-import AppCard from './components/AppCard';
+import AppTable from './components/AppTable';
 import EventStream from './components/EventStream';
 import GpuTimeline from './components/GpuTimeline';
-import type { Replica } from './types';
+import ReservationMonitor from './components/ReservationMonitor';
+import DiagnosticPanel from './components/DiagnosticPanel';
+import type { Replica, GPUReservation } from './types';
 
 export default function App() {
-  const { state, events, connected } = useWorldState();
+  const { state, events, connected, latestCycle, scalingConfig } = useWorldState();
 
   const clusters = state ? Object.values(state.Clusters) : [];
   const applications = state ? Object.values(state.Applications) : [];
   const replicas: Replica[] = state ? Object.values(state.Replicas) : [];
+  const reservations: GPUReservation[] = state?.Reservations ? Object.values(state.Reservations) : [];
+  const cacheLocations = state?.CacheLocations || {};
 
   return (
     <div className="min-h-screen bg-gray-900 text-gray-100">
@@ -40,6 +45,9 @@ export default function App() {
       <div className="flex">
         {/* Main content */}
         <main className="flex-1 p-6 space-y-6">
+          {/* Hero Status Strip */}
+          {state && <HeroStrip state={state} latestCycle={latestCycle} />}
+
           {/* Fleet Overview */}
           <section>
             <h2 className="text-xl font-semibold mb-4">Fleet Overview</h2>
@@ -50,10 +58,31 @@ export default function App() {
                 {clusters
                   .sort((a, b) => a.ClusterID.localeCompare(b.ClusterID))
                   .map((cluster) => (
-                    <ClusterCard key={cluster.ClusterID} cluster={cluster} />
+                    <ClusterCard
+                      key={cluster.ClusterID}
+                      cluster={cluster}
+                      reservations={reservations}
+                      cacheLocations={cacheLocations}
+                    />
                   ))}
               </div>
             )}
+          </section>
+
+          {/* Applications */}
+          <section>
+            <h2 className="text-xl font-semibold mb-4">Applications</h2>
+            {applications.length === 0 ? (
+              <p className="text-gray-500">No applications configured</p>
+            ) : state ? (
+              <AppTable
+                applications={applications}
+                replicas={replicas}
+                state={state}
+                latestCycle={latestCycle}
+                scalingConfig={scalingConfig}
+              />
+            ) : null}
           </section>
 
           {/* GPU Timelines */}
@@ -62,31 +91,27 @@ export default function App() {
               <h2 className="text-xl font-semibold mb-4">GPU Utilization</h2>
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                 {clusters.map((cluster) => (
-                  <GpuTimeline key={cluster.ClusterID} clusterID={cluster.ClusterID} />
+                  <GpuTimeline
+                    key={cluster.ClusterID}
+                    clusterID={cluster.ClusterID}
+                    reservations={reservations}
+                  />
                 ))}
               </div>
             </section>
           )}
 
-          {/* Applications */}
+          {/* Reservation Monitor */}
           <section>
-            <h2 className="text-xl font-semibold mb-4">Applications</h2>
-            {applications.length === 0 ? (
-              <p className="text-gray-500">No applications configured</p>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {applications
-                  .sort((a, b) => a.Priority - b.Priority || a.AppID.localeCompare(b.AppID))
-                  .map((app) => (
-                    <AppCard
-                      key={app.AppID}
-                      app={app}
-                      replicas={replicas.filter((r) => r.AppID === app.AppID)}
-                    />
-                  ))}
-              </div>
-            )}
+            <ReservationMonitor reservations={reservations} />
           </section>
+
+          {/* Diagnostic Panel */}
+          {state && (
+            <section>
+              <DiagnosticPanel state={state} latestCycle={latestCycle} scalingConfig={scalingConfig} />
+            </section>
+          )}
         </main>
 
         {/* Sidebar: Event Stream */}

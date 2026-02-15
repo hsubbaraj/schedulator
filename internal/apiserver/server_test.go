@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel/trace/noop"
 
+	"github.com/hsubbaraj/schedulator/internal/engine/scaling"
 	"github.com/hsubbaraj/schedulator/internal/eventlog"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
 	"github.com/hsubbaraj/schedulator/pkg/model"
@@ -168,6 +169,38 @@ func TestCORS(t *testing.T) {
 
 	assert.Equal(t, http.StatusNoContent, rec.Code)
 	assert.Equal(t, "*", rec.Header().Get("Access-Control-Allow-Origin"))
+}
+
+func TestHandleScalingConfig(t *testing.T) {
+	srv := newTestServer(t)
+	srv.SetScalingConfig(scaling.DefaultScalingConfig())
+
+	handler := srv.Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scaling-config", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.Equal(t, "application/json", rec.Header().Get("Content-Type"))
+
+	var body scalingConfigResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	assert.Equal(t, 10.0, body.QueueHighWatermark)
+	assert.Equal(t, 0.85, body.KVCacheHighWatermark)
+	assert.Equal(t, 120, body.ScaleUpCooldownSeconds)
+	assert.Equal(t, 300, body.ScaleDownCooldownSeconds)
+	assert.Equal(t, 3, body.StabilizationCycles)
+}
+
+func TestHandleScalingConfig_NotSet(t *testing.T) {
+	srv := newTestServer(t)
+
+	handler := srv.Handler()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/scaling-config", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
 }
 
 func TestEventBus_PublishSubscribe(t *testing.T) {

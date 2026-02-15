@@ -1,12 +1,14 @@
 import { useState } from 'react';
-import type { Cluster } from '../types';
+import type { Cluster, GPUReservation, CacheLocation } from '../types';
 import NodeBar from './NodeBar';
 
 interface Props {
   cluster: Cluster;
+  reservations: GPUReservation[];
+  cacheLocations: Record<string, CacheLocation[]>;
 }
 
-export default function ClusterCard({ cluster }: Props) {
+export default function ClusterCard({ cluster, reservations, cacheLocations }: Props) {
   const [expanded, setExpanded] = useState(false);
 
   const nodes = cluster.Nodes ? Object.values(cluster.Nodes) : [];
@@ -16,6 +18,27 @@ export default function ClusterCard({ cluster }: Props) {
   const readyNodes = nodes.filter((n) => n.Status === 'ready').length;
 
   const utilizationPct = totalGPUs > 0 ? Math.round((allocatedGPUs / totalGPUs) * 100) : 0;
+
+  // Reservations for this cluster
+  const clusterReservations = reservations.filter(
+    (r) => r.ClusterID === cluster.ClusterID && r.Status === 'active'
+  );
+
+  // Count cached models for this cluster
+  let cachedModelCount = 0;
+  for (const locations of Object.values(cacheLocations)) {
+    if (locations.some((loc) => loc.ClusterID === cluster.ClusterID)) {
+      cachedModelCount++;
+    }
+  }
+
+  // Compute reserved GPUs per node for NodeBar
+  const reservedByNode: Record<string, number> = {};
+  for (const r of clusterReservations) {
+    if (r.NodeID) {
+      reservedByNode[r.NodeID] = (reservedByNode[r.NodeID] || 0) + r.GPUs;
+    }
+  }
 
   return (
     <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
@@ -37,6 +60,18 @@ export default function ClusterCard({ cluster }: Props) {
             </p>
           </div>
         </div>
+        <div className="mt-2 flex gap-2">
+          {clusterReservations.length > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-yellow-900/50 text-yellow-400 border border-yellow-700">
+              {clusterReservations.length} reserved
+            </span>
+          )}
+          {cachedModelCount > 0 && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-blue-900/50 text-blue-400 border border-blue-700">
+              {cachedModelCount} models cached
+            </span>
+          )}
+        </div>
         <div className="mt-2 bg-gray-700 rounded-full h-2 overflow-hidden">
           <div
             className={`h-full transition-all duration-300 ${
@@ -57,7 +92,9 @@ export default function ClusterCard({ cluster }: Props) {
           ) : (
             nodes
               .sort((a, b) => a.NodeID.localeCompare(b.NodeID))
-              .map((node) => <NodeBar key={node.NodeID} node={node} />)
+              .map((node) => (
+                <NodeBar key={node.NodeID} node={node} reservedGPUs={reservedByNode[node.NodeID] || 0} />
+              ))
           )}
         </div>
       )}

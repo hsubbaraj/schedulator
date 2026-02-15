@@ -158,7 +158,8 @@ func run(ctx context.Context, addr string) error {
 	// ---------------------------------------------------------------
 	// 7. Create engines
 	// ---------------------------------------------------------------
-	scalingEngine := scaling.NewScalingEngine(scaling.DefaultScalingConfig(), tracer, reg)
+	scalingCfg := scaling.DefaultScalingConfig()
+	scalingEngine := scaling.NewScalingEngine(scalingCfg, tracer, reg)
 	preemptionEngine := preemption.NewPreemptionEngine(preemption.DefaultPreemptionConfig(), tracer, reg)
 	placementEngine := placement.NewPlacementEngine(placement.DefaultPlacementConfig(), preemptionEngine, tracer, reg)
 	rebalancingEngine := rebalancing.NewRebalancingEngine(rebalancing.DefaultRebalancingConfig(), tracer, reg)
@@ -183,9 +184,24 @@ func run(ctx context.Context, addr string) error {
 	}, tracer, reg)
 
 	// ---------------------------------------------------------------
-	// 11. Create control loop
+	// 11. Create API server (before control loop so eventBus is available)
+	// ---------------------------------------------------------------
+	apiSrv := apiserver.New(ws, eventLog, tracer)
+	apiSrv.SetScalingConfig(scalingCfg)
+	staticDir := os.Getenv("STATIC_DIR")
+	if staticDir == "" {
+		staticDir = "web/dist"
+	}
+	if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
+		apiSrv.SetStaticDir(staticDir)
+		slog.Info("serving dashboard", "dir", staticDir)
+	}
+
+	// ---------------------------------------------------------------
+	// 12. Create control loop
 	// ---------------------------------------------------------------
 	leader := leaderelect.AlwaysLeader{}
+	publisher := &eventBusPublisher{bus: apiSrv.EventBus()}
 	loop := controlloop.NewControlLoop(
 		controlloop.ControlLoopConfig{},
 		ingester,
@@ -196,22 +212,11 @@ func run(ctx context.Context, addr string) error {
 		exec,
 		ws,
 		leader,
+		publisher,
+		eventLog,
 		tracer,
 		reg,
 	)
-
-	// ---------------------------------------------------------------
-	// 12. Create API server
-	// ---------------------------------------------------------------
-	apiSrv := apiserver.New(ws, eventLog, tracer)
-	staticDir := os.Getenv("STATIC_DIR")
-	if staticDir == "" {
-		staticDir = "web/dist"
-	}
-	if info, err := os.Stat(staticDir); err == nil && info.IsDir() {
-		apiSrv.SetStaticDir(staticDir)
-		slog.Info("serving dashboard", "dir", staticDir)
-	}
 
 	// ---------------------------------------------------------------
 	// 13. Build HTTP mux
@@ -342,6 +347,19 @@ func buildClusterClients(tracer trace.Tracer, reg prometheus.Registerer) (
 	}
 
 	return aggConfigs, clusterClients, nil
+}
+
+// eventBusPublisher adapts apiserver.EventBus to the controlloop.cycleSummaryPublisher interface.
+type eventBusPublisher struct {
+	bus *apiserver.EventBus
+}
+
+func (p *eventBusPublisher) PublishCycleSummary(summary controlloop.CycleSummary) {
+	p.bus.Publish(apiserver.Event{
+		Type:      "cycle_summary",
+		Timestamp: time.Now(),
+		Data:      summary,
+	})
 }
 
 func main() {

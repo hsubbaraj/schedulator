@@ -254,6 +254,7 @@ func newTestHarness() *testHarness {
 	cl := NewControlLoop(
 		ControlLoopConfig{ReservationExpiryScanInterval: time.Hour}, // long interval to avoid interference
 		ing, sc, pl, rb, pg, ex, ws, leader,
+		nil, nil, // publisher, eventLogger
 		tracer, reg,
 	)
 

@@ -11,9 +11,27 @@ import (
 
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/hsubbaraj/schedulator/internal/engine/scaling"
 	"github.com/hsubbaraj/schedulator/internal/eventlog"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
 )
+
+// scalingConfigResponse is the JSON-safe response for GET /api/v1/scaling-config.
+// time.Duration fields are converted to seconds.
+type scalingConfigResponse struct {
+	QueueHighWatermark       float64 `json:"QueueHighWatermark"`
+	QueueTarget              float64 `json:"QueueTarget"`
+	QueueLowWatermark        float64 `json:"QueueLowWatermark"`
+	KVCacheHighWatermark     float64 `json:"KVCacheHighWatermark"`
+	KVCacheTarget            float64 `json:"KVCacheTarget"`
+	KVCacheLowWatermark      float64 `json:"KVCacheLowWatermark"`
+	BatchLowWatermark        float64 `json:"BatchLowWatermark"`
+	MaxScaleDownPerCycle     int     `json:"MaxScaleDownPerCycle"`
+	MaxScaleUpPerCycle       int     `json:"MaxScaleUpPerCycle"`
+	ScaleUpCooldownSeconds   int     `json:"ScaleUpCooldownSeconds"`
+	ScaleDownCooldownSeconds int     `json:"ScaleDownCooldownSeconds"`
+	StabilizationCycles      int     `json:"StabilizationCycles"`
+}
 
 // Server serves the HTTP API and SSE event stream.
 type Server struct {
@@ -22,6 +40,7 @@ type Server struct {
 	eventLog   *eventlog.Store
 	tracer     trace.Tracer
 	staticDir  string
+	scalingCfg *scalingConfigResponse
 }
 
 // New creates an API Server.
@@ -39,6 +58,24 @@ func (s *Server) SetStaticDir(dir string) {
 	s.staticDir = dir
 }
 
+// SetScalingConfig stores the scaling config for the /api/v1/scaling-config endpoint.
+func (s *Server) SetScalingConfig(cfg scaling.ScalingConfig) {
+	s.scalingCfg = &scalingConfigResponse{
+		QueueHighWatermark:       cfg.QueueHighWatermark,
+		QueueTarget:              cfg.QueueTarget,
+		QueueLowWatermark:        cfg.QueueLowWatermark,
+		KVCacheHighWatermark:     cfg.KVCacheHighWatermark,
+		KVCacheTarget:            cfg.KVCacheTarget,
+		KVCacheLowWatermark:      cfg.KVCacheLowWatermark,
+		BatchLowWatermark:        cfg.BatchLowWatermark,
+		MaxScaleDownPerCycle:     cfg.MaxScaleDownPerCycle,
+		MaxScaleUpPerCycle:       cfg.MaxScaleUpPerCycle,
+		ScaleUpCooldownSeconds:   int(cfg.ScaleUpCooldown.Seconds()),
+		ScaleDownCooldownSeconds: int(cfg.ScaleDownCooldown.Seconds()),
+		StabilizationCycles:      cfg.StabilizationCycles,
+	}
+}
+
 // EventBus returns the event bus for publishing events from the control loop.
 func (s *Server) EventBus() *EventBus {
 	return s.eventBus
@@ -54,6 +91,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/events/stream", s.handleEventStream)
 	mux.HandleFunc("GET /api/v1/events/history", s.handleEventHistory)
 	mux.HandleFunc("GET /api/v1/snapshots", s.handleSnapshots)
+	mux.HandleFunc("GET /api/v1/scaling-config", s.handleScalingConfig)
 
 	if s.staticDir != "" {
 		mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
@@ -185,6 +223,14 @@ func (s *Server) handleSnapshots(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, snaps)
+}
+
+func (s *Server) handleScalingConfig(w http.ResponseWriter, _ *http.Request) {
+	if s.scalingCfg == nil {
+		http.Error(w, "scaling config not set", http.StatusServiceUnavailable)
+		return
+	}
+	writeJSON(w, s.scalingCfg)
 }
 
 func writeJSON(w http.ResponseWriter, v interface{}) {
