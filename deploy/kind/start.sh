@@ -48,6 +48,10 @@ for CLUSTER in "$CLUSTER_1" "$CLUSTER_2"; do
     echo "    Installing KWOK ${KWOK_RELEASE} in ${CLUSTER}..."
     kubectl --context "$CTX" apply -f "https://github.com/${KWOK_REPO}/releases/download/${KWOK_RELEASE}/kwok.yaml"
     kubectl --context "$CTX" apply -f "https://github.com/${KWOK_REPO}/releases/download/${KWOK_RELEASE}/stage-fast.yaml"
+    # Pin KWOK controller to the real control-plane node so it doesn't get
+    # scheduled onto its own fake KWOK nodes (which can't run containers).
+    kubectl --context "$CTX" patch deployment kwok-controller -n kube-system \
+      --type=json -p '[{"op":"add","path":"/spec/template/spec/nodeSelector","value":{"node-role.kubernetes.io/control-plane":""}}]'
   else
     echo "    KWOK already installed in ${CLUSTER}"
   fi

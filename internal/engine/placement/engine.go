@@ -2,6 +2,7 @@ package placement
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"sort"
 	"time"
@@ -145,9 +146,15 @@ func (e *PlacementEngine) ComputePlacement(
 						clusterID = plan.TargetCluster
 						constraints = plan.Constraints
 						ok = true
+					} else if err != nil {
+						slog.WarnContext(ctx, "preemption failed", "app_id", su.appID, "error", err)
+					} else {
+						slog.WarnContext(ctx, "no preemption possible, all lower-priority replicas at min_replicas",
+							"app_id", su.appID, "gpus_needed", app.GPUsPerReplica)
 					}
 				}
 				if !ok {
+					slog.WarnContext(ctx, "no capacity for scale-up", "app_id", su.appID, "gpus_needed", app.GPUsPerReplica)
 					e.noCapacityCounter.WithLabelValues(su.appID).Inc()
 					continue
 				}

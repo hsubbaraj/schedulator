@@ -11,7 +11,9 @@ interface Props {
 export default function ClusterCard({ cluster, reservations, cacheLocations }: Props) {
   const [expanded, setExpanded] = useState(false);
 
-  const nodes = cluster.Nodes ? Object.values(cluster.Nodes) : [];
+  const allNodes = cluster.Nodes ? Object.values(cluster.Nodes) : [];
+  // Filter out non-GPU nodes (e.g., control-plane nodes with 0 GPUs).
+  const nodes = allNodes.filter((n) => n.TotalGPUs > 0);
   const totalGPUs = nodes.reduce((sum, n) => sum + n.TotalGPUs, 0);
   const allocatedGPUs = nodes.reduce((sum, n) => sum + n.AllocatedGPUs, 0);
   const freeGPUs = totalGPUs - allocatedGPUs;

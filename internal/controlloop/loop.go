@@ -456,19 +456,24 @@ func (cl *ControlLoop) applyEvents(ctx context.Context, events []ingestion.Event
 func (cl *ControlLoop) applyClusterEvent(_ context.Context, ce model.ClusterEvent) {
 	switch ce.Kind {
 	case model.ClusterEventNodeUp:
-		// Node details (GPU count, etc.) come from the aggregator's FullSync or
-		// informer handlers. Here we just mark the node as ready; the aggregator
-		// will have already done a FullSync at startup populating full node data.
-		// For ongoing watches, the informer handler in k8saggregator sends events
-		// but the actual node state is refreshed via periodic FullSync.
+		cl.worldState.UpsertNode(model.Node{
+			NodeID:       ce.NodeID,
+			ClusterID:    ce.ClusterID,
+			TotalGPUs:    ce.TotalGPUs,
+			FreeGPUs:     ce.TotalGPUs,
+			CachedModels: make(map[model.ModelID]struct{}),
+			Status:       model.NodeStatusReady,
+		})
 	case model.ClusterEventNodeDown:
 		cl.worldState.RemoveNode(ce.ClusterID, ce.NodeID)
 	case model.ClusterEventPodRunning:
 		if ce.ReplicaID != "" {
 			cl.worldState.UpsertReplica(model.Replica{
 				ReplicaID: ce.ReplicaID,
+				AppID:     ce.AppID,
 				ClusterID: ce.ClusterID,
 				NodeID:    ce.NodeID,
+				GPUs:      ce.GPUs,
 				Status:    model.ReplicaStatusRunning,
 				CreatedAt: ce.Timestamp,
 			})
@@ -486,6 +491,7 @@ func (cl *ControlLoop) applyScalingDecisions(decisions map[model.AppID]scaling.S
 		if d.ScaleActionApproved {
 			cl.worldState.RecordScaleEvent(appID, string(d.Direction), d.ActionAt)
 		} else if d.ScaleDownSignalObserved {
+			slog.Info("incrementing scale-down signal", "app_id", appID, "current", d.CurrentCount, "target", d.TargetCount)
 			cl.worldState.IncrementScaleDownSignal(appID)
 		}
 	}

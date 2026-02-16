@@ -25,6 +25,7 @@ func addNodeHandlers(informer cache.SharedIndexInformer, clusterID model.Cluster
 					Kind:      model.ClusterEventNodeUp,
 					ClusterID: clusterID,
 					NodeID:    node.Name,
+					TotalGPUs: extractNodeGPUs(node),
 					Timestamp: time.Now(),
 				}
 			}
@@ -43,6 +44,7 @@ func addNodeHandlers(informer cache.SharedIndexInformer, clusterID model.Cluster
 					Kind:      model.ClusterEventNodeUp,
 					ClusterID: clusterID,
 					NodeID:    newNode.Name,
+					TotalGPUs: extractNodeGPUs(newNode),
 					Timestamp: time.Now(),
 				}
 			} else if wasReady && !nowReady {
@@ -109,11 +111,14 @@ func addPodHandlers(informer cache.SharedIndexInformer, clusterID model.ClusterI
 			if !isSchedulatorPod(pod) {
 				return
 			}
+			appID := pod.Labels[labelAppID]
 			eventCh <- model.ClusterEvent{
 				Kind:      model.ClusterEventPodTerminated,
 				ClusterID: clusterID,
 				NodeID:    pod.Spec.NodeName,
-				ReplicaID: pod.Name,
+				ReplicaID: model.ReplicaID(appID + "-" + pod.Name),
+				AppID:     model.AppID(appID),
+				GPUs:      extractPodGPUs(pod),
 				Timestamp: time.Now(),
 			}
 		},
@@ -121,13 +126,19 @@ func addPodHandlers(informer cache.SharedIndexInformer, clusterID model.ClusterI
 }
 
 func emitPodEvent(pod *corev1.Pod, clusterID model.ClusterID, eventCh chan<- model.ClusterEvent) {
+	appID := pod.Labels[labelAppID]
+	// ReplicaID must match the format used in FullSync: "appID-podName".
+	replicaID := model.ReplicaID(appID + "-" + pod.Name)
+	gpus := extractPodGPUs(pod)
 	switch pod.Status.Phase {
 	case corev1.PodRunning:
 		eventCh <- model.ClusterEvent{
 			Kind:      model.ClusterEventPodRunning,
 			ClusterID: clusterID,
 			NodeID:    pod.Spec.NodeName,
-			ReplicaID: pod.Name,
+			ReplicaID: replicaID,
+			AppID:     model.AppID(appID),
+			GPUs:      gpus,
 			Timestamp: time.Now(),
 		}
 	case corev1.PodSucceeded, corev1.PodFailed:
@@ -135,7 +146,9 @@ func emitPodEvent(pod *corev1.Pod, clusterID model.ClusterID, eventCh chan<- mod
 			Kind:      model.ClusterEventPodTerminated,
 			ClusterID: clusterID,
 			NodeID:    pod.Spec.NodeName,
-			ReplicaID: pod.Name,
+			ReplicaID: replicaID,
+			AppID:     model.AppID(appID),
+			GPUs:      gpus,
 			Timestamp: time.Now(),
 		}
 	}
