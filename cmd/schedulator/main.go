@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -70,10 +71,24 @@ func run(ctx context.Context, addr string) error {
 	}
 
 	otlpEndpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
+	environment := os.Getenv("APP_ENV")
+	if environment == "" {
+		environment = "development"
+	}
+	samplingRatio := 1.0
+	if ratioStr := os.Getenv("OTEL_SAMPLING_RATIO"); ratioStr != "" {
+		if r, err := strconv.ParseFloat(ratioStr, 64); err == nil {
+			samplingRatio = r
+		}
+	}
+
 	tp, shutdown, err := observability.NewTracerProvider(observability.TracingConfig{
-		ServiceName:  "schedulator",
-		OTLPEndpoint: otlpEndpoint,
-		Enabled:      otlpEndpoint != "",
+		ServiceName:   "schedulator",
+		Environment:   environment,
+		OTLPEndpoint:  otlpEndpoint,
+		Enabled:       otlpEndpoint != "" || os.Getenv("OTEL_STDOUT") == "true",
+		Stdout:        os.Getenv("OTEL_STDOUT") == "true",
+		SamplingRatio: samplingRatio,
 	})
 	if err != nil {
 		return fmt.Errorf("create tracer provider: %w", err)
@@ -179,14 +194,14 @@ func run(ctx context.Context, addr string) error {
 	// ---------------------------------------------------------------
 	ingester := ingestion.NewIngester(aggregator, cfgStore, ingestion.IngesterConfig{
 		MetricsPollInterval:  30 * time.Second,
-		PeriodicEvalInterval: 15 * time.Second,
+		PeriodicEvalInterval: 30 * time.Second,
 		DebounceWindow:       2 * time.Second,
 	}, tracer, reg)
 
 	// ---------------------------------------------------------------
 	// 11. Create API server (before control loop so eventBus is available)
 	// ---------------------------------------------------------------
-	apiSrv := apiserver.New(ws, eventLog, tracer)
+	apiSrv := apiserver.New(ws, ingester, eventLog, tracer)
 	apiSrv.SetScalingConfig(scalingCfg)
 	staticDir := os.Getenv("STATIC_DIR")
 	if staticDir == "" {

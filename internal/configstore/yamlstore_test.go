@@ -21,6 +21,11 @@ const testConfig = `applications:
     priority: 0
     min_replicas: 1
     failure_domain_rule: spread_clusters
+    sla:
+      max_p99_ttft_ms: 100
+      max_p99_tps: 50
+    metrics:
+      avg_waiting_queue_depth: 5.0
   - app_id: codegen-7b
     model_id: codegen-mono-7b
     gpus_per_replica: 1
@@ -52,6 +57,8 @@ func TestListApplications(t *testing.T) {
 	assert.Equal(t, 0, apps[0].Priority)
 	assert.Equal(t, 1, apps[0].MinReplicas)
 	assert.Equal(t, model.FailureDomainSpreadClusters, apps[0].FailureDomainRule)
+	assert.Equal(t, 100, apps[0].SLA.MaxP99TTFTMs)
+	assert.Equal(t, 50, apps[0].SLA.MaxP99TPS)
 
 	assert.Equal(t, "codegen-7b", apps[1].AppID)
 	assert.Equal(t, 1, apps[1].GPUsPerReplica)
@@ -105,7 +112,7 @@ func TestWatchApplications_DetectsChange(t *testing.T) {
 	require.NoError(t, err)
 
 	// Give the watcher time to start.
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(200 * time.Millisecond)
 
 	// Write updated config.
 	updatedConfig := `applications:
@@ -125,6 +132,44 @@ func TestWatchApplications_DetectsChange(t *testing.T) {
 		assert.Equal(t, 2, app.GPUsPerReplica)
 	case <-time.After(3 * time.Second):
 		t.Fatal("timed out waiting for config change event")
+	}
+}
+
+func TestWatchMetrics_DetectsChange(t *testing.T) {
+	dir := t.TempDir()
+	path := writeConfig(t, dir, testConfig)
+
+	tracer := noop.NewTracerProvider().Tracer("test")
+	store := NewYAMLStore(path, tracer)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	ch, err := store.WatchMetrics(ctx)
+	require.NoError(t, err)
+
+	// Give the watcher time to start and consume initial metrics if any.
+	time.Sleep(200 * time.Millisecond)
+
+	// Write updated config.
+	updatedConfig := `applications:
+  - app_id: llama-70b
+    metrics:
+      avg_waiting_queue_depth: 25.0
+`
+	require.NoError(t, os.WriteFile(path, []byte(updatedConfig), 0644))
+
+	// Should receive the updated metrics.
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case m := <-ch:
+			if m.AppID == "llama-70b" && m.AvgWaitingQueueDepth == 25.0 {
+				return
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for metrics change event")
+		}
 	}
 }
 

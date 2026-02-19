@@ -43,22 +43,21 @@ docs/                    # Architecture diagrams and design docs
 
 ## Quick Start
 
-The fastest way to get a running system with simulated GPU clusters:
+The fastest way to get a running system with Kind clusters, KWOK nodes, and a full observability stack (SigNoz + ClickHouse):
 
 ```bash
 # Clone and build the dashboard
 cd web && npm install && npm run build && cd ..
 
-# Launch everything (creates Kind clusters, KWOK nodes, starts schedulator)
-./deploy/kind/start.sh
+# Launch everything (Kind, SigNoz, Schedulator)
+./deploy/start.sh
 ```
 
 This script will:
-1. Create two Kind clusters (`schedulator-1` and `schedulator-2`)
-2. Install the KWOK controller in each cluster
-3. Create 3 simulated GPU nodes per cluster (8 GPUs each = 48 GPUs total)
-4. Start the schedulator binary connected to both clusters
-5. Serve the dashboard at **http://localhost:8080**
+1. Start the **SigNoz observability stack** (ClickHouse, UI, OTel Gateway) via Docker Compose.
+2. Create two Kind clusters (`schedulator-1` and `schedulator-2`) with **KWOK GPU nodes**.
+3. Start the schedulator binary with **Tail-based Sampling** enabled (forwarding traces to SigNoz).
+4. Serve the dashboard at **http://localhost:8080** and SigNoz at **http://localhost:3301**.
 
 ## Manual Setup
 

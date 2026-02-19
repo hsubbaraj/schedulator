@@ -1,6 +1,6 @@
 import { useState } from 'react';
-import type { Application, Replica, WorldState, CycleSummary, ScalingConfig } from '../types';
-import AppDetailDrawer from './AppDetailDrawer';
+import type { Application, Replica, WorldState, CycleSummary, ScalingConfig, EventRecord } from '../types';
+import AppHistoryModal from './AppHistoryModal';
 
 interface Props {
   applications: Application[];
@@ -8,15 +8,18 @@ interface Props {
   state: WorldState;
   latestCycle: CycleSummary | null;
   scalingConfig: ScalingConfig | null;
+  cycleHistory: EventRecord[];
 }
 
-export default function AppTable({ applications, replicas, state, latestCycle, scalingConfig }: Props) {
+export default function AppTable({ applications, replicas, state, latestCycle, scalingConfig, cycleHistory }: Props) {
   const [selectedAppID, setSelectedAppID] = useState<string | null>(null);
 
   const metrics = state.VLLMMetrics || {};
   const decisions = latestCycle?.scaling_decisions || {};
 
   const sorted = [...applications].sort((a, b) => a.Priority - b.Priority || a.AppID.localeCompare(b.AppID));
+
+  const selectedApp = applications.find(a => a.AppID === selectedAppID);
 
   return (
     <>
@@ -92,11 +95,11 @@ export default function AppTable({ applications, replicas, state, latestCycle, s
         </table>
       </div>
 
-      {selectedAppID && (
-        <AppDetailDrawer
-          appID={selectedAppID}
+      {selectedApp && (
+        <AppHistoryModal
+          app={selectedApp}
           state={state}
-          latestCycle={latestCycle}
+          cycleHistory={cycleHistory}
           scalingConfig={scalingConfig}
           onClose={() => setSelectedAppID(null)}
         />

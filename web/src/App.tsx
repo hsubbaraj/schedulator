@@ -5,11 +5,12 @@ import AppTable from './components/AppTable';
 import EventStream from './components/EventStream';
 import GpuTimeline from './components/GpuTimeline';
 import ReservationMonitor from './components/ReservationMonitor';
-import DiagnosticPanel from './components/DiagnosticPanel';
+import ControlLoopPanel from './components/ControlLoopPanel';
+import MetricInjectionPanel from './components/MetricInjectionPanel';
 import type { Replica, GPUReservation } from './types';
 
 export default function App() {
-  const { state, events, connected, latestCycle, scalingConfig } = useWorldState();
+  const { state, events, cycleHistory, connected, latestCycle, scalingConfig } = useWorldState();
 
   const clusters = state ? Object.values(state.Clusters) : [];
   const applications = state ? Object.values(state.Applications) : [];
@@ -48,6 +49,11 @@ export default function App() {
           {/* Hero Status Strip */}
           {state && <HeroStrip state={state} latestCycle={latestCycle} />}
 
+          {/* Control Loop Monitoring */}
+          <section>
+            <ControlLoopPanel cycleHistory={cycleHistory} />
+          </section>
+
           {/* Fleet Overview */}
           <section>
             <h2 className="text-xl font-semibold mb-4">Fleet Overview</h2>
@@ -81,6 +87,7 @@ export default function App() {
                 state={state}
                 latestCycle={latestCycle}
                 scalingConfig={scalingConfig}
+                cycleHistory={cycleHistory}
               />
             ) : null}
           </section>
@@ -106,10 +113,10 @@ export default function App() {
             <ReservationMonitor reservations={reservations} />
           </section>
 
-          {/* Diagnostic Panel */}
+          {/* Simulation */}
           {state && (
-            <section>
-              <DiagnosticPanel state={state} latestCycle={latestCycle} scalingConfig={scalingConfig} />
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <MetricInjectionPanel state={state} />
             </section>
           )}
         </main>

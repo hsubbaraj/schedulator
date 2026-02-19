@@ -6,6 +6,7 @@ const API_BASE = '/api/v1';
 export function useWorldState() {
   const [state, setState] = useState<WorldState | null>(null);
   const [events, setEvents] = useState<EventRecord[]>([]);
+  const [cycleHistory, setCycleHistory] = useState<EventRecord[]>([]);
   const [connected, setConnected] = useState(false);
   const [latestCycle, setLatestCycle] = useState<CycleSummary | null>(null);
   const [scalingConfig, setScalingConfig] = useState<ScalingConfig | null>(null);
@@ -46,10 +47,23 @@ export function useWorldState() {
     }
   }, []);
 
+  const fetchCycleHistory = useCallback(async () => {
+    try {
+      const res = await fetch(`${API_BASE}/control-loop/history?limit=100`);
+      if (res.ok) {
+        const data: EventRecord[] = await res.json();
+        setCycleHistory(data || []);
+      }
+    } catch {
+      // Silent fail.
+    }
+  }, []);
+
   useEffect(() => {
     fetchState();
     fetchHistory();
     fetchScalingConfig();
+    fetchCycleHistory();
 
     // SSE connection.
     const es = new EventSource(`${API_BASE}/events/stream`);
@@ -64,6 +78,19 @@ export function useWorldState() {
         }
         if (event.type === 'cycle_summary' && event.data) {
           setLatestCycle(event.data as CycleSummary);
+          // Prepend to cycle history.
+          setCycleHistory((prev) => [
+            {
+              id: Date.now(),
+              timestamp: event.timestamp,
+              type: event.type,
+              app_id: '',
+              cluster_id: '',
+              summary: '',
+              detail_json: JSON.stringify(event.data),
+            },
+            ...prev.slice(0, 99),
+          ]);
         }
         // Add as a simple event record for the feed.
         const summary =
@@ -98,9 +125,9 @@ export function useWorldState() {
       es.close();
       clearInterval(interval);
     };
-  }, [fetchState, fetchHistory, fetchScalingConfig]);
+  }, [fetchState, fetchHistory, fetchScalingConfig, fetchCycleHistory]);
 
-  return { state, events, connected, refresh: fetchState, latestCycle, scalingConfig };
+  return { state, events, cycleHistory, connected, refresh: fetchState, latestCycle, scalingConfig };
 }
 
 function formatCycleSummary(cs: CycleSummary): string {

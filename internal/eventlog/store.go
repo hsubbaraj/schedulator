@@ -146,6 +146,39 @@ func (s *Store) QueryEvents(ctx context.Context, since time.Time, limit int) ([]
 	return events, rows.Err()
 }
 
+// QueryEventsByType returns events of a specific type, up to limit.
+func (s *Store) QueryEventsByType(ctx context.Context, eventType string, limit int) ([]EventRecord, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, timestamp, type, app_id, cluster_id, summary, detail_json
+		 FROM events
+		 WHERE type = ?
+		 ORDER BY timestamp DESC
+		 LIMIT ?`,
+		eventType,
+		limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []EventRecord
+	for rows.Next() {
+		var e EventRecord
+		var ts string
+		var appID, clusterID, detailJSON sql.NullString
+		if err := rows.Scan(&e.ID, &ts, &e.Type, &appID, &clusterID, &e.Summary, &detailJSON); err != nil {
+			return nil, err
+		}
+		e.Timestamp, _ = time.Parse(time.RFC3339Nano, ts)
+		e.AppID = appID.String
+		e.ClusterID = clusterID.String
+		e.DetailJSON = detailJSON.String
+		events = append(events, e)
+	}
+	return events, rows.Err()
+}
+
 // QuerySnapshots returns GPU utilization snapshots for a cluster since the given time.
 func (s *Store) QuerySnapshots(ctx context.Context, clusterID string, since time.Time) ([]ClusterSnapshot, error) {
 	rows, err := s.db.QueryContext(ctx,

@@ -13,7 +13,9 @@ import (
 
 	"github.com/hsubbaraj/schedulator/internal/engine/scaling"
 	"github.com/hsubbaraj/schedulator/internal/eventlog"
+	"github.com/hsubbaraj/schedulator/internal/ingestion"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
+	"github.com/hsubbaraj/schedulator/pkg/model"
 )
 
 // scalingConfigResponse is the JSON-safe response for GET /api/v1/scaling-config.
@@ -36,6 +38,7 @@ type scalingConfigResponse struct {
 // Server serves the HTTP API and SSE event stream.
 type Server struct {
 	worldState *worldstate.WorldState
+	ingester   *ingestion.Ingester
 	eventBus   *EventBus
 	eventLog   *eventlog.Store
 	tracer     trace.Tracer
@@ -44,9 +47,10 @@ type Server struct {
 }
 
 // New creates an API Server.
-func New(ws *worldstate.WorldState, el *eventlog.Store, tracer trace.Tracer) *Server {
+func New(ws *worldstate.WorldState, ing *ingestion.Ingester, el *eventlog.Store, tracer trace.Tracer) *Server {
 	return &Server{
 		worldState: ws,
+		ingester:   ing,
 		eventBus:   NewEventBus(),
 		eventLog:   el,
 		tracer:     tracer,
@@ -92,6 +96,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/events/history", s.handleEventHistory)
 	mux.HandleFunc("GET /api/v1/snapshots", s.handleSnapshots)
 	mux.HandleFunc("GET /api/v1/scaling-config", s.handleScalingConfig)
+	mux.HandleFunc("GET /api/v1/control-loop/history", s.handleCycleHistory)
+
+	mux.HandleFunc("POST /api/v1/inject/event", s.handleInjectEvent)
+	mux.HandleFunc("POST /api/v1/inject/metrics", s.handleInjectMetrics)
 
 	if s.staticDir != "" {
 		mux.Handle("/", http.FileServer(http.Dir(s.staticDir)))
@@ -233,6 +241,62 @@ func (s *Server) handleScalingConfig(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, s.scalingCfg)
 }
 
+func (s *Server) handleCycleHistory(w http.ResponseWriter, r *http.Request) {
+	limitStr := r.URL.Query().Get("limit")
+	limit := 50
+	if limitStr != "" {
+		if n, err := strconv.Atoi(limitStr); err == nil && n > 0 {
+			limit = n
+		}
+	}
+
+	// We use QueryEvents but filter for type="cycle_complete" in the DB if we had a dedicated query,
+	// but for now QueryEvents is general. Let's add a more specific query to eventlog.Store.
+	events, err := s.eventLog.QueryEventsByType(r.Context(), "cycle_complete", limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, events)
+}
+
+func (s *Server) handleInjectEvent(w http.ResponseWriter, r *http.Request) {
+	var ev ingestion.Event
+	if err := json.NewDecoder(r.Body).Decode(&ev); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if ev.Timestamp.IsZero() {
+		ev.Timestamp = time.Now()
+	}
+
+	s.ingester.InjectEvent(r.Context(), ev)
+	w.WriteHeader(http.StatusAccepted)
+}
+
+func (s *Server) handleInjectMetrics(w http.ResponseWriter, r *http.Request) {
+	var m model.VLLMMetrics
+	if err := json.NewDecoder(r.Body).Decode(&m); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if m.MeasuredAt.IsZero() {
+		m.MeasuredAt = time.Now()
+	}
+
+	ev := ingestion.Event{
+		Kind:        ingestion.EventMetricsUpdate,
+		Timestamp:   m.MeasuredAt,
+		AppID:       m.AppID,
+		VLLMMetrics: &m,
+	}
+
+	s.ingester.InjectEvent(r.Context(), ev)
+	w.WriteHeader(http.StatusAccepted)
+}
+
 func writeJSON(w http.ResponseWriter, v interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
@@ -243,7 +307,7 @@ func writeJSON(w http.ResponseWriter, v interface{}) {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

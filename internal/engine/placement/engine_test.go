@@ -241,18 +241,18 @@ func TestFindBestCluster_GPUMemoryDominates(t *testing.T) {
 
 // ---------- selectScaleDownVictims ----------
 
-func TestSelectScaleDownVictims_PrefersHighFragmentation(t *testing.T) {
+func TestSelectScaleDownVictims_PrefersLowUtilization(t *testing.T) {
 	e := newTestEngine()
 	snap := baseSnap()
 	app := baseApp("app-1")
 	snap.Applications["app-1"] = app
 
-	// Two clusters with different fragmentation levels.
+	// Two clusters with different utilization levels.
 	snap.Clusters["cluster-a"] = baseCluster("cluster-a", map[model.NodeID]model.Node{
-		"node-a1": baseNode("node-a1", "cluster-a", 8, 2), // frag = 1 - 2/8 = 0.75
+		"node-a1": baseNode("node-a1", "cluster-a", 8, 2), // util = 1 - 2/8 = 0.75 (almost full)
 	})
 	snap.Clusters["cluster-b"] = baseCluster("cluster-b", map[model.NodeID]model.Node{
-		"node-b1": baseNode("node-b1", "cluster-b", 8, 6), // frag = 1 - 6/8 = 0.25
+		"node-b1": baseNode("node-b1", "cluster-b", 8, 6), // util = 1 - 6/8 = 0.25 (mostly empty)
 	})
 
 	snap.Replicas["r1"] = model.Replica{ReplicaID: "r1", AppID: "app-1", ClusterID: "cluster-a", NodeID: "node-a1", Status: model.ReplicaStatusRunning}
@@ -260,7 +260,7 @@ func TestSelectScaleDownVictims_PrefersHighFragmentation(t *testing.T) {
 
 	victims := e.selectScaleDownVictims("app-1", 1, snap)
 	require.Len(t, victims, 1)
-	assert.Equal(t, model.ReplicaID("r1"), victims[0]) // higher fragmentation removed first
+	assert.Equal(t, model.ReplicaID("r2"), victims[0]) // lower utilization removed first to empty the node
 }
 
 // ---------- ComputePlacement ----------

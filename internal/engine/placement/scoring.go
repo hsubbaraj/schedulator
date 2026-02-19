@@ -77,7 +77,7 @@ func (e *PlacementEngine) computePackingScore(cluster model.Cluster, gpusNeeded 
 
 // selectScaleDownVictims selects replicas to remove for a scale-down. Replicas
 // are sorted by removal preference:
-//  1. Higher node fragmentation (1 - free/total) → remove first (frees near-full nodes)
+//  1. Lower node utilization (higher free GPUs) → remove first (to empty nodes)
 //  2. Non-cached replicas → remove first (less cache impact)
 //  3. Over-represented clusters → remove first (balance)
 func (e *PlacementEngine) selectScaleDownVictims(
@@ -87,7 +87,7 @@ func (e *PlacementEngine) selectScaleDownVictims(
 ) []model.ReplicaID {
 	type candidate struct {
 		replicaID    model.ReplicaID
-		fragScore    float64
+		utilScore    float64
 		cached       bool
 		clusterCount int
 	}
@@ -114,11 +114,11 @@ func (e *PlacementEngine) selectScaleDownVictims(
 			continue
 		}
 
-		// Node fragmentation: 1 - free/total. Higher = more fragmented = remove first.
-		fragScore := 0.0
+		// Node utilization: 1 - free/total. Lower = less utilized = remove first to empty it.
+		utilScore := 0.0
 		if cluster, ok := snap.Clusters[r.ClusterID]; ok {
 			if node, ok := cluster.Nodes[r.NodeID]; ok && node.TotalGPUs > 0 {
-				fragScore = 1.0 - float64(node.FreeGPUs)/float64(node.TotalGPUs)
+				utilScore = 1.0 - float64(node.FreeGPUs)/float64(node.TotalGPUs)
 			}
 		}
 
@@ -133,21 +133,21 @@ func (e *PlacementEngine) selectScaleDownVictims(
 
 		candidates = append(candidates, candidate{
 			replicaID:    r.ReplicaID,
-			fragScore:    fragScore,
+			utilScore:    utilScore,
 			cached:       cached,
 			clusterCount: clusterCounts[r.ClusterID],
 		})
 	}
 
-	// Sort: prefer removing replicas with higher fragmentation, non-cached,
-	// from over-represented clusters.
+	// Sort: prefer removing replicas with lower utilization (to empty nodes),
+	// then non-cached, then from over-represented clusters.
 	sort.Slice(candidates, func(i, j int) bool {
 		a, b := candidates[i], candidates[j]
-		// Higher fragmentation first.
-		if a.fragScore != b.fragScore {
-			return a.fragScore > b.fragScore
+		// Lower utilization first.
+		if a.utilScore != b.utilScore {
+			return a.utilScore < b.utilScore
 		}
-		// Non-cached first (false < true, so !cached means higher priority).
+		// Non-cached first.
 		if a.cached != b.cached {
 			return !a.cached
 		}

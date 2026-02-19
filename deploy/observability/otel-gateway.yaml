@@ -1,0 +1,57 @@
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+  prometheus:
+    config:
+      scrape_configs:
+        - job_name: 'schedulator'
+          scrape_interval: 15s
+          static_configs:
+            - targets: ['schedulator:8080']
+
+processors:
+  batch:
+    timeout: 10s
+    send_batch_size: 10000
+
+  tail_sampling:
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 100
+    policies:
+      - name: keep-errors
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      - name: keep-slow-cycles
+        type: latency
+        latency: {threshold_ms: 500}
+      - name: sample-success
+        type: probabilistic
+        probabilistic: {sampling_percentage: 10}
+
+exporters:
+  otlp/signoz:
+    endpoint: "signoz-otel-collector:4317"
+    tls:
+      insecure: true
+  debug:
+    verbosity: normal
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [tail_sampling, batch]
+      exporters: [otlp/signoz]
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [batch]
+      exporters: [otlp/signoz]
+    logs:
+      receivers: [otlp]
+      processors: [batch]
+      exporters: [otlp/signoz]

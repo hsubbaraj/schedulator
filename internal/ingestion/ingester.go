@@ -38,6 +38,8 @@ type Ingester struct {
 
 	mu          sync.RWMutex
 	appRegistry map[model.AppID]model.Application
+
+	injectCh chan Event
 }
 
 // NewIngester creates an Ingester wired to the given ports and instrumentation.
@@ -72,6 +74,15 @@ func NewIngester(
 			Buckets: prometheus.DefBuckets,
 		}),
 		appRegistry: make(map[model.AppID]model.Application),
+		injectCh:    make(chan Event, rawChSize),
+	}
+}
+
+// InjectEvent pushes an externally generated event into the ingestion pipeline.
+func (ing *Ingester) InjectEvent(ctx context.Context, e Event) {
+	select {
+	case ing.injectCh <- e:
+	case <-ctx.Done():
 	}
 }
 
@@ -100,10 +111,17 @@ func (ing *Ingester) Start(ctx context.Context) (<-chan []Event, error) {
 
 	rawCh := make(chan Event, rawChSize)
 
+	metricsCh, err := ing.cs.WatchMetrics(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("ingester: watch metrics: %w", err)
+	}
+
 	var wg sync.WaitGroup
-	wg.Add(4)
+	wg.Add(6)
 	go ing.listenClusterEvents(ctx, eventCh, rawCh, &wg)
 	go ing.listenAppConfig(ctx, appCh, rawCh, &wg)
+	go ing.listenMetricsConfig(ctx, metricsCh, rawCh, &wg)
+	go ing.listenInjectedEvents(ctx, rawCh, &wg)
 	go ing.pollVLLMMetrics(ctx, rawCh, &wg)
 	go ing.periodicEvalTimer(ctx, rawCh, &wg)
 
@@ -118,6 +136,36 @@ func (ing *Ingester) Start(ctx context.Context) (<-chan []Event, error) {
 	outCh := ing.instrumentBatches(ctx, debouncedCh)
 
 	return outCh, nil
+}
+
+func (ing *Ingester) listenInjectedEvents(ctx context.Context, rawCh chan<- Event, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case e, ok := <-ing.injectCh:
+			if !ok {
+				return
+			}
+			_, span := ing.tracer.Start(ctx, "ingestion.receive_event",
+				trace.WithAttributes(attribute.String("kind", string(e.Kind)), attribute.Bool("injected", true)))
+			ing.eventsTotal.WithLabelValues(string(e.Kind)).Inc()
+
+			rawCh <- e
+			span.End()
+
+			// If it's a metrics update, also check for SLA breaches.
+			if e.Kind == EventMetricsUpdate && e.VLLMMetrics != nil {
+				ing.mu.RLock()
+				app, ok := ing.appRegistry[e.VLLMMetrics.AppID]
+				ing.mu.RUnlock()
+				if ok {
+					ing.checkSLABreach(ctx, app, *e.VLLMMetrics, rawCh)
+				}
+			}
+		}
+	}
 }
 
 func (ing *Ingester) listenClusterEvents(ctx context.Context, eventCh <-chan model.ClusterEvent, rawCh chan<- Event, wg *sync.WaitGroup) {
@@ -168,6 +216,39 @@ func (ing *Ingester) listenAppConfig(ctx context.Context, appCh <-chan model.App
 				Application: &app,
 			}
 			span.End()
+		}
+	}
+}
+
+func (ing *Ingester) listenMetricsConfig(ctx context.Context, metricsCh <-chan model.VLLMMetrics, rawCh chan<- Event, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case metrics, ok := <-metricsCh:
+			if !ok {
+				return
+			}
+			_, span := ing.tracer.Start(ctx, "ingestion.receive_event",
+				trace.WithAttributes(attribute.String("kind", string(EventMetricsUpdate))))
+			ing.eventsTotal.WithLabelValues(string(EventMetricsUpdate)).Inc()
+
+			rawCh <- Event{
+				Kind:        EventMetricsUpdate,
+				Timestamp:   metrics.MeasuredAt,
+				AppID:       metrics.AppID,
+				VLLMMetrics: &metrics,
+			}
+			span.End()
+
+			// Check SLA breaches using the app from registry.
+			ing.mu.RLock()
+			app, ok := ing.appRegistry[metrics.AppID]
+			ing.mu.RUnlock()
+			if ok {
+				ing.checkSLABreach(ctx, app, metrics, rawCh)
+			}
 		}
 	}
 }

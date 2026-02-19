@@ -14,4 +14,8 @@ type ConfigStore interface {
 
 	// ListApplications returns all currently configured applications.
 	ListApplications(ctx context.Context) ([]model.Application, error)
+
+	// WatchMetrics returns a channel that emits simulated vLLM metrics from
+	// the config file.
+	WatchMetrics(ctx context.Context) (<-chan model.VLLMMetrics, error)
 }

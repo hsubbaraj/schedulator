@@ -141,6 +141,8 @@ export interface CycleSummary {
 export interface ScalingDecision {
   AppID: string;
   CurrentCount: number;
+  RunningCount: number;
+  PendingCount: number;
   TargetCount: number;
   Direction: string;
   Signal: string;
