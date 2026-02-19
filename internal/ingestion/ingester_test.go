@@ -20,7 +20,7 @@ func testIngesterConfig() IngesterConfig {
 	return IngesterConfig{
 		MetricsPollInterval:  50 * time.Millisecond,
 		PeriodicEvalInterval: 50 * time.Millisecond,
-		DebounceWindow:       30 * time.Millisecond,
+		DebounceWindow:       100 * time.Millisecond,
 	}
 }
 
@@ -56,6 +56,7 @@ func TestIngester_ClusterEventPassthrough(t *testing.T) {
 	cs.EXPECT().ListApplications(mock.Anything).Return(nil, nil)
 	agg.EXPECT().WatchEvents(mock.Anything).Return(eventCh, nil)
 	cs.EXPECT().WatchApplications(mock.Anything).Return(appCh, nil)
+	cs.EXPECT().WatchMetrics(mock.Anything).Return(make(chan model.VLLMMetrics), nil)
 
 	ing := newTestIngester(t, agg, cs)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -91,6 +92,7 @@ func TestIngester_TimerFires(t *testing.T) {
 	cs.EXPECT().ListApplications(mock.Anything).Return(nil, nil)
 	agg.EXPECT().WatchEvents(mock.Anything).Return(eventCh, nil)
 	cs.EXPECT().WatchApplications(mock.Anything).Return(appCh, nil)
+	cs.EXPECT().WatchMetrics(mock.Anything).Return(make(chan model.VLLMMetrics), nil)
 
 	ing := newTestIngester(t, agg, cs)
 	ctx, cancel := context.WithCancel(context.Background())
@@ -121,6 +123,7 @@ func TestIngester_MetricsPolling(t *testing.T) {
 	cs.EXPECT().ListApplications(mock.Anything).Return(apps, nil)
 	agg.EXPECT().WatchEvents(mock.Anything).Return(eventCh, nil)
 	cs.EXPECT().WatchApplications(mock.Anything).Return(appCh, nil)
+	cs.EXPECT().WatchMetrics(mock.Anything).Return(make(chan model.VLLMMetrics), nil)
 	agg.EXPECT().GetVLLMMetrics(mock.Anything, "app-1").Return(
 		model.VLLMMetrics{AppID: "app-1", TotalTokensPerSecond: 100, MeasuredAt: time.Now()}, nil,
 	).Maybe()
@@ -162,6 +165,7 @@ func TestIngester_AppConfigUpdate(t *testing.T) {
 	cs.EXPECT().ListApplications(mock.Anything).Return(nil, nil)
 	agg.EXPECT().WatchEvents(mock.Anything).Return(eventCh, nil)
 	cs.EXPECT().WatchApplications(mock.Anything).Return(appCh, nil)
+	cs.EXPECT().WatchMetrics(mock.Anything).Return(make(chan model.VLLMMetrics), nil)
 	// After the new app is registered, metrics poll may call GetVLLMMetrics for it.
 	agg.EXPECT().GetVLLMMetrics(mock.Anything, mock.Anything).Return(
 		model.VLLMMetrics{}, nil,
@@ -210,6 +214,7 @@ func TestIngester_NewAppAppearsInMetricsPolling(t *testing.T) {
 	cs.EXPECT().ListApplications(mock.Anything).Return(nil, nil)
 	agg.EXPECT().WatchEvents(mock.Anything).Return(eventCh, nil)
 	cs.EXPECT().WatchApplications(mock.Anything).Return(appCh, nil)
+	cs.EXPECT().WatchMetrics(mock.Anything).Return(make(chan model.VLLMMetrics), nil)
 	agg.EXPECT().GetVLLMMetrics(mock.Anything, "dynamic-app").Return(
 		model.VLLMMetrics{AppID: "dynamic-app", TotalTokensPerSecond: 50}, nil,
 	).Maybe()
@@ -257,6 +262,7 @@ func TestIngester_MetricsPollError_ContinuesOtherApps(t *testing.T) {
 	cs.EXPECT().ListApplications(mock.Anything).Return(apps, nil)
 	agg.EXPECT().WatchEvents(mock.Anything).Return(eventCh, nil)
 	cs.EXPECT().WatchApplications(mock.Anything).Return(appCh, nil)
+	cs.EXPECT().WatchMetrics(mock.Anything).Return(make(chan model.VLLMMetrics), nil)
 
 	agg.EXPECT().GetVLLMMetrics(mock.Anything, "app-fail").Return(
 		model.VLLMMetrics{}, errors.New("connection refused"),
@@ -290,6 +296,50 @@ func TestIngester_MetricsPollError_ContinuesOtherApps(t *testing.T) {
 	}
 }
 
+func TestIngester_MetricsFromConfig(t *testing.T) {
+	agg := mocks.NewMockClusterAggregator(t)
+	cs := mocks.NewMockConfigStore(t)
+
+	eventCh := make(chan model.ClusterEvent)
+	appCh := make(chan model.Application)
+	metricsCh := make(chan model.VLLMMetrics, 1)
+
+	cs.EXPECT().ListApplications(mock.Anything).Return(nil, nil)
+	agg.EXPECT().WatchEvents(mock.Anything).Return(eventCh, nil)
+	cs.EXPECT().WatchApplications(mock.Anything).Return(appCh, nil)
+	cs.EXPECT().WatchMetrics(mock.Anything).Return(metricsCh, nil)
+
+	ing := newTestIngester(t, agg, cs)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	outCh, err := ing.Start(ctx)
+	require.NoError(t, err)
+
+	// Give the listeners time to start.
+	time.Sleep(100 * time.Millisecond)
+
+	metricsCh <- model.VLLMMetrics{AppID: "config-app", AvgWaitingQueueDepth: 15.0}
+
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case batch, ok := <-outCh:
+			if !ok {
+				t.Fatal("output closed")
+			}
+			for _, ev := range batch {
+				if ev.Kind == EventMetricsUpdate && ev.AppID == "config-app" {
+					assert.Equal(t, 15.0, ev.VLLMMetrics.AvgWaitingQueueDepth)
+					return
+				}
+			}
+		case <-deadline:
+			t.Fatal("timed out waiting for metrics from config")
+		}
+	}
+}
+
 func TestIngester_GracefulShutdown(t *testing.T) {
 	agg := mocks.NewMockClusterAggregator(t)
 	cs := mocks.NewMockConfigStore(t)
@@ -300,6 +350,7 @@ func TestIngester_GracefulShutdown(t *testing.T) {
 	cs.EXPECT().ListApplications(mock.Anything).Return(nil, nil)
 	agg.EXPECT().WatchEvents(mock.Anything).Return(eventCh, nil)
 	cs.EXPECT().WatchApplications(mock.Anything).Return(appCh, nil)
+	cs.EXPECT().WatchMetrics(mock.Anything).Return(make(chan model.VLLMMetrics), nil)
 
 	ing := newTestIngester(t, agg, cs)
 	ctx, cancel := context.WithCancel(context.Background())

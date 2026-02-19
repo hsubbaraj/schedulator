@@ -38,6 +38,8 @@ const (
 type ScalingDecision struct {
 	AppID        model.AppID
 	CurrentCount int
+	RunningCount int
+	PendingCount int
 	TargetCount  int
 	Direction    ScaleDirection
 	Signal       ScaleSignal
@@ -108,12 +110,16 @@ func (e *ScalingEngine) ComputeTargets(ctx context.Context, snap worldstate.Worl
 		}
 
 		profile := snap.PerformanceProfiles[appID]
-		currentCount := countReplicasByStatus(appID, snap, model.ReplicaStatusRunning) +
-			countReplicasByStatus(appID, snap, model.ReplicaStatusPending)
+		running := countReplicasByStatus(appID, snap, model.ReplicaStatusRunning)
+		pending := countReplicasByStatus(appID, snap, model.ReplicaStatusPending)
+		currentCount := running + pending
 
 		rawTarget, signal := e.computeTargetReplicas(app, metrics, profile, currentCount)
 		effectiveTarget := e.computeEffectiveTarget(ctx, app, rawTarget, snap)
 		decision := e.applyStabilityControls(ctx, appID, app, effectiveTarget, currentCount, snap)
+
+		decision.RunningCount = running
+		decision.PendingCount = pending
 
 		_, childSpan := e.tracer.Start(ctx, "scaling.compute_target",
 			trace.WithAttributes(

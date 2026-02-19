@@ -1,0 +1,167 @@
+x-common: &common
+  networks:
+    - signoz-net
+  restart: unless-stopped
+
+services:
+  # --- SigNoz Infrastructure ---
+  init-clickhouse:
+    image: clickhouse/clickhouse-server:25.5.6
+    container_name: signoz-init-clickhouse
+    command:
+      - bash
+      - -c
+      - |
+        version="v0.0.1"
+        node_os=$$(uname -s | tr '[:upper:]' '[:lower:]')
+        node_arch=$$(uname -m | sed s/aarch64/arm64/ | sed s/x86_64/amd64/)
+        echo "Fetching histogram-binary for $${node_os}/$${node_arch}"
+        cd /tmp
+        wget -O histogram-quantile.tar.gz "https://github.com/SigNoz/signoz/releases/download/histogram-quantile%2F$${version}/histogram-quantile_$${node_os}_$${node_arch}.tar.gz"
+        tar -xvzf histogram-quantile.tar.gz
+        mv histogram-quantile /var/lib/clickhouse/user_scripts/histogramQuantile
+    restart: on-failure
+    volumes:
+      - /usr/local/google/home/harikarans/src/signoz/deploy/common/clickhouse/user_scripts:/var/lib/clickhouse/user_scripts/
+    networks:
+      - signoz-net
+
+  zookeeper-1:
+    image: signoz/zookeeper:3.7.1
+    container_name: signoz-zookeeper-1
+    environment:
+      - ZOO_SERVER_ID=1
+      - ALLOW_ANONYMOUS_LOGIN=yes
+      - ZOO_AUTOPURGE_INTERVAL=1
+      - ZOO_ENABLE_PROMETHEUS_METRICS=yes
+      - ZOO_PROMETHEUS_METRICS_PORT_NUMBER=9141
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -m 2 http://localhost:8080/commands/ruok | grep error | grep null"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - signoz-net
+
+  clickhouse:
+    image: clickhouse/clickhouse-server:25.5.6
+    container_name: signoz-clickhouse
+    volumes:
+      - /usr/local/google/home/harikarans/src/signoz/deploy/common/clickhouse/config.xml:/etc/clickhouse-server/config.xml
+      - /usr/local/google/home/harikarans/src/signoz/deploy/common/clickhouse/users.xml:/etc/clickhouse-server/users.xml
+      - /usr/local/google/home/harikarans/src/signoz/deploy/common/clickhouse/custom-function.xml:/etc/clickhouse-server/custom-function.xml
+      - /usr/local/google/home/harikarans/src/signoz/deploy/common/clickhouse/user_scripts:/var/lib/clickhouse/user_scripts/
+      - /usr/local/google/home/harikarans/src/signoz/deploy/common/clickhouse/cluster.xml:/etc/clickhouse-server/config.d/cluster.xml
+      - clickhouse:/var/lib/clickhouse/
+    environment:
+      - CLICKHOUSE_SKIP_USER_SETUP=1
+    depends_on:
+      init-clickhouse:
+        condition: service_completed_successfully
+      zookeeper-1:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "0.0.0.0:8123/ping"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - signoz-net
+
+  schema-migrator-sync:
+    image: signoz/signoz-schema-migrator:v0.142.0
+    container_name: schema-migrator-sync
+    command: ["sync", "--dsn=tcp://clickhouse:9000", "--up="]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+    networks:
+      - signoz-net
+    restart: on-failure
+
+  schema-migrator-async:
+    image: signoz/signoz-schema-migrator:v0.142.0
+    container_name: schema-migrator-async
+    command: ["async", "--dsn=tcp://clickhouse:9000", "--up="]
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      schema-migrator-sync:
+        condition: service_completed_successfully
+    networks:
+      - signoz-net
+    restart: on-failure
+
+  signoz:
+    image: signoz/signoz:v0.112.0
+    container_name: signoz
+    command: ["--config=/root/config/prometheus.yml"]
+    ports:
+      - "3301:8080" # SigNoz UI
+    volumes:
+      - /usr/local/google/home/harikarans/src/signoz/deploy/common/signoz/prometheus.yml:/root/config/prometheus.yml
+      - /usr/local/google/home/harikarans/src/signoz/deploy/common/dashboards:/root/config/dashboards
+      - sqlite:/var/lib/signoz/
+    environment:
+      - SIGNOZ_TELEMETRYSTORE_CLICKHOUSE_DSN=tcp://clickhouse:9000
+      - SIGNOZ_SQLSTORE_SQLITE_PATH=/var/lib/signoz/signoz.db
+      - STORAGE=clickhouse
+    depends_on:
+      clickhouse:
+        condition: service_healthy
+      schema-migrator-sync:
+        condition: service_completed_successfully
+    networks:
+      - signoz-net
+
+  otel-collector:
+    image: signoz/signoz-otel-collector:v0.142.0
+    container_name: signoz-otel-collector
+    command: ["--config=/etc/otel-collector-config.yaml"]
+    volumes:
+      - /usr/local/google/home/harikarans/src/signoz/deploy/docker/otel-collector-config.yaml:/etc/otel-collector-config.yaml
+    environment:
+      - OTEL_RESOURCE_ATTRIBUTES=host.name=signoz-host,os.type=linux
+    depends_on:
+      - signoz
+      - clickhouse
+    networks:
+      - signoz-net
+
+  # --- Schedulator Observability Gateway (Tail Sampling) ---
+  otel-gateway:
+    image: otel/opentelemetry-collector-contrib:0.112.0
+    container_name: otel-gateway
+    command: ["--config=/etc/otel-gateway.yaml"]
+    volumes:
+      - ./deploy/observability/otel-gateway.yaml:/etc/otel-gateway.yaml
+    ports:
+      - "4317:4317" # OTLP gRPC
+      - "4318:4318" # OTLP HTTP
+    depends_on:
+      - otel-collector
+    networks:
+      - signoz-net
+
+  # --- Schedulator Application ---
+  # schedulator:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: schedulator
+  #   environment:
+  #     - OTEL_EXPORTER_OTLP_ENDPOINT=otel-gateway:4317
+  #     - APP_ENV=development
+  #   depends_on:
+  #     - otel-gateway
+  #   networks:
+  #     - signoz-net
+
+networks:
+  signoz-net:
+    name: signoz-net
+
+volumes:
+  clickhouse:
+  sqlite:
+  zookeeper-1:

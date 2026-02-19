@@ -142,6 +142,24 @@ func (ws *WorldState) UpsertNode(n model.Node) {
 	ws.clustersGauge.Set(float64(len(ws.clusters)))
 }
 
+// RemoveNode deletes a node from its parent cluster and recomputes fragmentation.
+// No-op if the cluster or node does not exist.
+func (ws *WorldState) RemoveNode(clusterID model.ClusterID, nodeID model.NodeID) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+
+	c, ok := ws.clusters[clusterID]
+	if !ok {
+		return
+	}
+	if c.Nodes == nil {
+		return
+	}
+	delete(c.Nodes, nodeID)
+	c.FragmentationScore = computeFragmentation(c.Nodes)
+	ws.clusters[clusterID] = c
+}
+
 // UpsertApplication stores an application in the applications map.
 func (ws *WorldState) UpsertApplication(app model.Application) {
 	ws.mu.Lock()

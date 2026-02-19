@@ -30,9 +30,9 @@ func DefaultScalingConfig() ScalingConfig {
 		KVCacheLowWatermark:  0.40,
 		BatchLowWatermark:    0.30,
 		MaxScaleDownPerCycle: 2,
-		MaxScaleUpPerCycle:   5,
-		ScaleUpCooldown:      120 * time.Second,
-		ScaleDownCooldown:    300 * time.Second,
+		MaxScaleUpPerCycle:   10,
+		ScaleUpCooldown:      1 * time.Second,
+		ScaleDownCooldown:    3 * time.Second,
 		StabilizationCycles:  3,
 	}
 }

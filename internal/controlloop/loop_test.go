@@ -200,6 +200,14 @@ func (m *mockWorldState) ExpireStaleReservations(_ time.Time) int {
 	return 0
 }
 
+func (m *mockWorldState) UpdateVLLMMetrics(_ model.VLLMMetrics)                        {}
+func (m *mockWorldState) UpsertCluster(_ model.Cluster)                                {}
+func (m *mockWorldState) UpsertNode(_ model.Node)                                      {}
+func (m *mockWorldState) RemoveNode(_ model.ClusterID, _ model.NodeID)                 {}
+func (m *mockWorldState) UpsertApplication(_ model.Application)                        {}
+func (m *mockWorldState) UpsertReplica(_ model.Replica)                                {}
+func (m *mockWorldState) DeleteReplica(_ model.ReplicaID)                              {}
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -246,6 +254,7 @@ func newTestHarness() *testHarness {
 	cl := NewControlLoop(
 		ControlLoopConfig{ReservationExpiryScanInterval: time.Hour}, // long interval to avoid interference
 		ing, sc, pl, rb, pg, ex, ws, leader,
+		nil, nil, // publisher, eventLogger
 		tracer, reg,
 	)
 

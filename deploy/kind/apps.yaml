@@ -1,0 +1,18 @@
+applications:
+  - app_id: llama-3-70b
+    model_id: meta-llama-3-70b
+    gpus_per_replica: 4
+    priority: 0
+    min_replicas: 4
+    failure_domain_rule: spread_clusters
+    sla:
+      max_p99_ttft_ms: 100
+      max_p99_tps: 50
+    metrics:
+      avg_waiting_queue_depth: 0.0
+      max_kv_cache_utilization: 0.0
+  - app_id: codegen-3-7b
+    model_id: codegen-3-7b
+    gpus_per_replica: 2
+    priority: 2
+    min_replicas: 4

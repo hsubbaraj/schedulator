@@ -18,5 +18,8 @@ type ClusterEvent struct {
 	ClusterID ClusterID
 	NodeID    NodeID
 	ReplicaID ReplicaID
+	AppID     AppID
+	GPUs      int
+	TotalGPUs int // For node events: total GPU capacity of the node.
 	Timestamp time.Time
 }

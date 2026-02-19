@@ -2,6 +2,7 @@ package placement
 
 import (
 	"context"
+	"log/slog"
 	"math"
 	"sort"
 	"time"
@@ -90,6 +91,8 @@ func (e *PlacementEngine) ComputePlacement(
 	start := time.Now()
 	decisions := model.PlacementDecisions{}
 	localReservations := make(map[model.ClusterID]int)
+	// localAppPlacement tracks replicas we've decided to place in this cycle.
+	localAppPlacement := make(map[model.AppID]map[model.ClusterID]int)
 
 	// 1. Compute deltas for approved scaling actions.
 	type appDelta struct {
@@ -133,8 +136,12 @@ func (e *PlacementEngine) ComputePlacement(
 
 	for _, su := range scaleUps {
 		app := snap.Applications[su.appID]
+		if _, ok := localAppPlacement[su.appID]; !ok {
+			localAppPlacement[su.appID] = make(map[model.ClusterID]int)
+		}
+
 		for i := 0; i < su.delta; i++ {
-			clusterID, constraints, ok := e.findBestCluster(ctx, app, snap, localReservations)
+			clusterID, constraints, ok := e.findBestCluster(ctx, app, snap, localReservations, localAppPlacement[su.appID])
 
 			if !ok {
 				// No cluster can fit — try preemption.
@@ -145,9 +152,15 @@ func (e *PlacementEngine) ComputePlacement(
 						clusterID = plan.TargetCluster
 						constraints = plan.Constraints
 						ok = true
+					} else if err != nil {
+						slog.WarnContext(ctx, "preemption failed", "app_id", su.appID, "error", err)
+					} else {
+						slog.WarnContext(ctx, "no preemption possible, all lower-priority replicas at min_replicas",
+							"app_id", su.appID, "gpus_needed", app.GPUsPerReplica)
 					}
 				}
 				if !ok {
+					slog.WarnContext(ctx, "no capacity for scale-up", "app_id", su.appID, "gpus_needed", app.GPUsPerReplica)
 					e.noCapacityCounter.WithLabelValues(su.appID).Inc()
 					continue
 				}
@@ -169,6 +182,7 @@ func (e *PlacementEngine) ComputePlacement(
 
 			// Track local reservations to prevent double-booking.
 			localReservations[clusterID] += app.GPUsPerReplica
+			localAppPlacement[su.appID][clusterID]++
 
 			decisions.ScaleUps = append(decisions.ScaleUps, model.ScaleUpDecision{
 				AppID:                 su.appID,
@@ -192,6 +206,7 @@ func (e *PlacementEngine) findBestCluster(
 	app model.Application,
 	snap worldstate.WorldStateSnapshot,
 	localReservations map[model.ClusterID]int,
+	localAppPlacement map[model.ClusterID]int,
 ) (model.ClusterID, model.SchedulingConstraints, bool) {
 	_, span := e.tracer.Start(ctx, "placement.find_best_cluster",
 		trace.WithAttributes(attribute.String("app.id", app.AppID)))
@@ -227,6 +242,10 @@ func (e *PlacementEngine) findBestCluster(
 				targetCount++
 			}
 		}
+		// Add currently planned replicas for this app in this cycle.
+		for _, count := range localAppPlacement {
+			targetCount += count
+		}
 		// Add 1 for the replica we're about to place.
 		targetCount++
 		spreadLimit = int(math.Ceil(float64(targetCount) / float64(len(eligibleClusters))))
@@ -239,6 +258,9 @@ func (e *PlacementEngine) findBestCluster(
 		// Spread limit check.
 		if app.FailureDomainRule == model.FailureDomainSpreadClusters {
 			replicasInCluster := countAppReplicasInCluster(app.AppID, clusterID, snap)
+			// Include replicas already planned for this cluster in this cycle.
+			replicasInCluster += localAppPlacement[clusterID]
+
 			if replicasInCluster >= spreadLimit {
 				continue
 			}

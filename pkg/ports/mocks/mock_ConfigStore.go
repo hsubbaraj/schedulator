@@ -138,6 +138,64 @@ func (_c *MockConfigStore_WatchApplications_Call) RunAndReturn(run func(context.
 	return _c
 }
 
+// WatchMetrics provides a mock function with given fields: ctx
+func (_m *MockConfigStore) WatchMetrics(ctx context.Context) (<-chan model.VLLMMetrics, error) {
+	ret := _m.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WatchMetrics")
+	}
+
+	var r0 <-chan model.VLLMMetrics
+	var r1 error
+	if rf, ok := ret.Get(0).(func(context.Context) (<-chan model.VLLMMetrics, error)); ok {
+		return rf(ctx)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context) <-chan model.VLLMMetrics); ok {
+		r0 = rf(ctx)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(<-chan model.VLLMMetrics)
+		}
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+		r1 = rf(ctx)
+	} else {
+		r1 = ret.Error(1)
+	}
+
+	return r0, r1
+}
+
+// MockConfigStore_WatchMetrics_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WatchMetrics'
+type MockConfigStore_WatchMetrics_Call struct {
+	*mock.Call
+}
+
+// WatchMetrics is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockConfigStore_Expecter) WatchMetrics(ctx interface{}) *MockConfigStore_WatchMetrics_Call {
+	return &MockConfigStore_WatchMetrics_Call{Call: _e.mock.On("WatchMetrics", ctx)}
+}
+
+func (_c *MockConfigStore_WatchMetrics_Call) Run(run func(ctx context.Context)) *MockConfigStore_WatchMetrics_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context))
+	})
+	return _c
+}
+
+func (_c *MockConfigStore_WatchMetrics_Call) Return(_a0 <-chan model.VLLMMetrics, _a1 error) *MockConfigStore_WatchMetrics_Call {
+	_c.Call.Return(_a0, _a1)
+	return _c
+}
+
+func (_c *MockConfigStore_WatchMetrics_Call) RunAndReturn(run func(context.Context) (<-chan model.VLLMMetrics, error)) *MockConfigStore_WatchMetrics_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewMockConfigStore creates a new instance of MockConfigStore. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewMockConfigStore(t interface {

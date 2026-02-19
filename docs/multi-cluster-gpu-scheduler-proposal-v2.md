@@ -91,78 +91,84 @@ The preemption decision is global; the final binding is local.
 ## 3. Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                                    EXTERNAL DEPENDENCIES                                 │
-├───────────────────────────────────┬─────────────────────┬───────────────────────────────┤
-│         Cluster Aggregator        │   Cache Registry    │     Performance Profiler      │
-│  (pods/nodes/vLLM metrics across  │  (tiered model      │     (offline metrics)         │
-│          all clusters)            │   locations)        │                               │
-└─────────────────┬─────────────────┴──────────┬──────────┴───────────────┬───────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│                              EXTERNAL DEPENDENCIES (Interfaces)                                │
+├───────────────────────────────────┬─────────────────────┬────────────────────────────────────┤
+│         Cluster Aggregator        │   Cache Registry    │     Performance Profiler           │
+│  (pods/nodes/vLLM metrics across  │  (tiered model      │     (offline metrics)              │
+│          all clusters)            │   locations)        │                                    │
+└─────────────────┬─────────────────┴──────────┬──────────┴───────────────┬────────────────────┘
                   │                            │                          │
                   │ cluster state + vLLM       │ cache state (tiered)     │ app profiles
                   │ (watch + poll 10s)         │ (poll 30s)               │ (poll 5m)
                   ▼                            ▼                          ▼
-┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                                                                                         │
-│                              GLOBAL SCHEDULER                                           │
-│                                                                                         │
-│  ┌───────────────────────────────────────────────────────────────────────────────────┐  │
-│  │                            Event Ingestion Layer                                  │  │
-│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                 │  │
-│  │  │vLLM Metrics │ │Cluster Event│ │ SLA Breach  │ │   Timer     │                 │  │
-│  │  │  Listener   │ │  Listener   │ │  Listener   │ │  (periodic) │                 │  │
-│  │  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘                 │  │
-│  └─────────┼───────────────┼───────────────┼───────────────┼────────────────────────┘  │
-│            └───────────────┴───────┬───────┴───────────────┘                            │
-│                                    ▼                                                    │
-│  ┌───────────────────────────────────────────────────────────────────────────────────┐  │
-│  │                           Scheduler Core                                          │  │
-│  │                                                                                   │  │
-│  │   ┌──────────────────────────────────────────────────────────────────────────┐   │  │
-│  │   │                    World State (in-memory snapshot)                      │   │  │
-│  │   │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐            │   │  │
-│  │   │  │  Cluster   │ │Application │ │Cache State │ │   vLLM     │            │   │  │
-│  │   │  │  Topology  │ │  Configs   │ │  (tiered)  │ │  Metrics   │            │   │  │
-│  │   │  │            │ │ & Replicas │ │            │ │            │            │   │  │
-│  │   │  └────────────┘ └────────────┘ └────────────┘ └────────────┘            │   │  │
-│  │   └──────────────────────────────────────────────────────────────────────────┘   │  │
-│  │                          ▲                                                       │  │
-│  │                          │ (continuously updated via State Sync)                 │  │
-│  │                          │                                                       │  │
-│  │   ┌─────────────────┐    │    ┌─────────────────┐    ┌─────────────────┐        │  │
-│  │   │  Scaling        │────┴───▶│  Placement      │───▶│     Plan        │        │  │
-│  │   │  Engine         │         │  Engine         │    │   Generator     │        │  │
-│  │   │                 │         │                 │    │                 │        │  │
-│  │   │ "How many       │         │ "Which cluster, │    │ "What ops to    │        │  │
-│  │   │  replicas?"     │         │  what affinity?"│    │  execute?"      │        │  │
-│  │   │ (uses vLLM      │         │ (cache-tier     │    │                 │        │  │
-│  │   │  metrics)       │         │  weighted)      │    │                 │        │  │
-│  │   └─────────────────┘         └─────────────────┘    └────────┬────────┘        │  │
-│  │                                                               │                  │  │
-│  └───────────────────────────────────────────────────────────────┼──────────────────┘  │
-│                                                                  │                     │
-│                                                                  ▼                     │
-│  ┌───────────────────────────────────────────────────────────────────────────────────┐  │
-│  │                           Plan Executor                                           │  │
-│  │                                                                                   │  │
-│  │   ┌─────────────────────────────────────────────────────────────────────────┐    │  │
-│  │   │                      Execution Coordinator                              │    │  │
-│  │   │  • Orders operations (preempt → scale-down → scale-up)                  │    │  │
-│  │   │  • Tracks in-flight operations                                          │    │  │
-│  │   │  • Handles rollback on failure                                          │    │  │
-│  │   └─────────────────────────────────────────────────────────────────────────┘    │  │
-│  │                              │                                                    │  │
-│  │         ┌────────────────────┼────────────────────┐                              │  │
-│  │         ▼                    ▼                    ▼                              │  │
-│  │  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐                       │  │
-│  │  │  Cluster    │      │  Cluster    │      │  Cluster    │                       │  │
-│  │  │  Client     │      │  Client     │      │  Client     │                       │  │
-│  │  │ us-west-1   │      │ eu-central-1│      │ ap-northeast│                       │  │
-│  │  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘                       │  │
-│  │         │                    │                    │                              │  │
-│  └─────────┼────────────────────┼────────────────────┼──────────────────────────────┘  │
-│            │                    │                    │                                  │
-└────────────┼────────────────────┼────────────────────┼──────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                               │
+│                              GLOBAL SCHEDULER                                                 │
+│                                                                                               │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                            Event Ingestion Layer                                       │   │
+│  │  ┌─────────────┐ ┌─────────────┐ ┌─────────────┐ ┌─────────────┐                      │   │
+│  │  │vLLM Metrics │ │Cluster Event│ │ SLA Breach  │ │   Timer     │                      │   │
+│  │  │  Listener   │ │  Listener   │ │  Listener   │ │  (periodic) │                      │   │
+│  │  └──────┬──────┘ └──────┬──────┘ └──────┬──────┘ └──────┬──────┘                      │   │
+│  └─────────┼───────────────┼───────────────┼───────────────┼─────────────────────────────┘   │
+│            └───────────────┴───────┬───────┴───────────────┘                                  │
+│                                    ▼                                                          │
+│  ┌──────────────────────┐                                                                    │
+│  │    Control Loop      │ (orchestrates full cycle, leader-election gated)                    │
+│  └──────────┬───────────┘                                                                    │
+│             ▼                                                                                │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                           Scheduler Core                                               │   │
+│  │                                                                                        │   │
+│  │   ┌──────────────────────────────────────────────────────────────────────────┐         │   │
+│  │   │                    World State (in-memory snapshot)                      │         │   │
+│  │   │  ┌────────────┐ ┌────────────┐ ┌────────────┐ ┌────────────┐            │         │   │
+│  │   │  │  Cluster   │ │Application │ │Cache State │ │   vLLM     │            │         │   │
+│  │   │  │  Topology  │ │  Configs   │ │  (tiered)  │ │  Metrics   │            │         │   │
+│  │   │  │            │ │ & Replicas │ │            │ │            │            │         │   │
+│  │   │  └────────────┘ └────────────┘ └────────────┘ └────────────┘            │         │   │
+│  │   └──────────────────────────────────────────────────────────────────────────┘         │   │
+│  │                          ▲                                                             │   │
+│  │                          │ (continuously updated via State Sync)                       │   │
+│  │                          │                                                             │   │
+│  │   ┌──────────────┐      │   ┌──────────────┐   ┌──────────────┐  ┌──────────────┐    │   │
+│  │   │   Scaling    │──────┴──▶│  Placement   │──▶│ Rebalancing  │─▶│    Plan      │    │   │
+│  │   │   Engine     │          │  Engine      │   │   Engine     │  │  Generator   │    │   │
+│  │   └──────────────┘          └──────────────┘   └──────────────┘  └───────┬──────┘    │   │
+│  │                                                                          │            │   │
+│  └──────────────────────────────────────────────────────────────────────────┼────────────┘   │
+│                                                                             │                 │
+│                                                                             ▼                 │
+│  ┌────────────────────────────────────────────────────────────────────────────────────────┐   │
+│  │                           Plan Executor                                                │   │
+│  │   ┌─────────────────────────────────────────────────────────────────────────┐          │   │
+│  │   │                      Execution Coordinator                              │          │   │
+│  │   │  • Orders operations (preempt → scale-down → scale-up → migrate)        │          │   │
+│  │   │  • Tracks in-flight operations                                          │          │   │
+│  │   │  • Handles rollback on failure                                          │          │   │
+│  │   └─────────────────────────────────────────────────────────────────────────┘          │   │
+│  │         ┌────────────────────┼────────────────────┐                                    │   │
+│  │         ▼                    ▼                    ▼                                    │   │
+│  │  ┌─────────────┐      ┌─────────────┐      ┌─────────────┐                            │   │
+│  │  │  Cluster    │      │  Cluster    │      │  Cluster    │                            │   │
+│  │  │  Client     │      │  Client     │      │  Client     │                            │   │
+│  │  │ us-west-1   │      │ eu-central-1│      │ ap-northeast│                            │   │
+│  │  └──────┬──────┘      └──────┬──────┘      └──────┬──────┘                            │   │
+│  └─────────┼────────────────────┼────────────────────┼────────────────────────────────────┘   │
+│            │                    │                    │                                         │
+│  ┌─────────┴────────────────────┴────────────────────┴──────────────────────────────────┐     │
+│  │                         Observability & API Layer                                     │     │
+│  │  ┌──────────────┐   ┌───────────────┐   ┌──────────────────┐                         │     │
+│  │  │  HTTP API    │   │  Event Log    │   │ React Dashboard  │                         │     │
+│  │  │  REST + SSE  │◀──│  (SQLite)     │   │ Fleet overview,  │                         │     │
+│  │  │  /api/v1/*   │──▶│  24h retention│   │ event stream,    │                         │     │
+│  │  └──────────────┘   └───────────────┘   │ GPU timeline     │                         │     │
+│  │                                         └──────────────────┘                         │     │
+│  └──────────────────────────────────────────────────────────────────────────────────────┘     │
+│                                                                                               │
+└────────────┬────────────────────┬────────────────────┬────────────────────────────────────────┘
              │ k8s API            │ k8s API            │ k8s API
              ▼                    ▼                    ▼
       ┌─────────────┐      ┌─────────────┐      ┌─────────────┐
@@ -184,6 +190,40 @@ The preemption decision is global; the final binding is local.
       │ └─────────┘ │      │ └─────────┘ │      │ └─────────┘ │
       └─────────────┘      └─────────────┘      └─────────────┘
 ```
+
+### 3.1 Concrete Implementations
+
+The architecture defines external dependencies as interfaces (`pkg/ports/`). The following concrete implementations connect the scheduler to real infrastructure:
+
+| Interface | Implementation | Package | Description |
+|-----------|---------------|---------|-------------|
+| `ClusterAggregator` | K8s Aggregator | `internal/k8saggregator/` | Uses client-go SharedInformers to watch Nodes and Pods across all clusters. Extracts GPU counts from `nvidia.com/gpu` resource. Emits `NodeUp`/`NodeDown`/`PodRunning`/`PodTerminated` events. |
+| `ConfigStore` | YAML ConfigStore | `internal/configstore/` | Reads application configs from a YAML file (`deploy/kind/apps.yaml`). Watches for file changes via `fsnotify` with 500ms debounce. |
+| `LeaderElector` | AlwaysLeader | `internal/leaderelect/` | Stub implementation for single-instance deployments. Always returns `true` for `IsLeader()`. |
+| `ClusterClient` | K8s Client | `internal/k8sclient/` | Creates/deletes single-replica Deployments via client-go. Implements replica lifecycle (create, delete, get status, label). |
+
+### 3.2 Observability & API Layer
+
+The scheduler exposes its state and decisions through an HTTP API and persists events to SQLite for historical queries:
+
+**Event Log** (`internal/eventlog/`): SQLite-backed store for scheduler events and GPU utilization snapshots. Events include scale-up, scale-down, preemption, migration, node state changes, and cycle completions. State snapshots record per-cluster GPU totals/allocated/free counts every 30 seconds. Auto-prunes events older than 24 hours.
+
+**HTTP API** (`internal/apiserver/`):
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/api/v1/state` | Full WorldState snapshot as JSON |
+| GET | `/api/v1/clusters` | All clusters with nodes |
+| GET | `/api/v1/applications` | All apps with replica counts |
+| GET | `/api/v1/events/stream` | SSE stream of live scheduler events |
+| GET | `/api/v1/events/history` | Historical events from SQLite |
+| GET | `/api/v1/snapshots` | GPU utilization time-series |
+
+**Dashboard** (`web/`): React SPA (Vite + TypeScript + Tailwind) providing:
+- Fleet overview with expandable cluster cards showing per-node GPU utilization bars
+- Application summary cards with replica counts and status indicators
+- Real-time event stream via SSE, color-coded by event type
+- Per-cluster GPU utilization timeline charts (Recharts)
 
 ---
 
@@ -1367,6 +1407,11 @@ This ensures the application never temporarily drops below its desired replica c
 | **Rebalancing** | Blue-green migration with disruption budget | Avoids in-place migration risk; ensures min_replicas during migration; max 2 migrations per cycle |
 | **Replica lifecycle** | Single-replica Deployments (v1); Cluster Client interface abstraction allows future CRD migration | Replicas are not fungible (different cache/constraints per replica); K8s handles crash recovery; Cluster Client hides implementation |
 | **Race condition prevention** | GPU reservations with TTL | Prevents double-booking; TTL prevents permanent resource leaks; cluster-scoped for tiered scheduling |
+| **Cluster state ingestion** | client-go SharedInformers (K8s Aggregator) | Watch-based for low latency on node/pod changes; FullSync for periodic reconciliation; GPU count from `nvidia.com/gpu` resource |
+| **Application config** | YAML file with fsnotify watch | Simple, human-editable; debounced file watching for live config changes; no external database dependency |
+| **Event persistence** | SQLite with 24h retention | Lightweight, zero-dependency; enables dashboard refresh and historical queries; pure-Go driver (modernc.org/sqlite) for CGO-free builds |
+| **Live visualization** | HTTP API + SSE + React dashboard | SSE for real-time push (no polling); REST endpoints for initial load and history; Tailwind + Recharts for lightweight developer tool |
+| **Leader election (v1)** | AlwaysLeader stub | Sufficient for single-instance development; interface-based (`ports.LeaderElector`) allows swap to K8s Lease for HA |
 
 ---
 
@@ -1409,7 +1454,7 @@ WorldState is in-memory — all reads are O(1) map lookups, ensuring the schedul
 2. **Scoring weights:** Tuning thresholds for scaling (QUEUE_HIGH_WATERMARK, KV_CACHE_HIGH_WATERMARK) and placement weights—requires simulation/production tuning
 3. **Volcano configuration:** Exact plugins and queue configuration
 4. ~~**Startup time handling:**~~ → Resolved: In-flight awareness with PENDING_DISCOUNT; SLA breach override for stale pending replicas; cooldown and stabilization windows prevent oscillation (see section 4.3)
-5. **Observability:** Metrics to export (scheduling latency, preemption rate, fragmentation score over time)
+5. ~~**Observability:**~~ → Resolved: HTTP API with SSE event streaming, SQLite event log with 24h retention, React dashboard with fleet overview/event stream/GPU timeline (see section 3.2). OTel tracing via context injection, Prometheus metrics via constructor injection (see CLAUDE.md observability rules).
 6. **Schedulator (simulator):** Design for testing algorithms before production
 7. ~~**Preemption cascades:**~~ → Resolved: P0 can preempt P1 after exhausting P2; P1 can only preempt P2; P2 cannot preempt
 8. ~~**Race conditions:**~~ → Resolved: GPU reservations with TTL prevent double-booking; reservations are cluster-scoped for tiered scheduling; TTL auto-expires to prevent permanent resource leaks (see sections 4.2, 4.4, 4.6)
@@ -1417,10 +1462,45 @@ WorldState is in-memory — all reads are O(1) map lookups, ensuring the schedul
 
 ---
 
-## 10. Next Steps
+## 10. Implementation Status
 
-1. Define API contracts for Traffic Gateway and Cluster Aggregator
-2. Prototype Scaling Engine with real traffic patterns
-3. Implement Placement Engine scoring function; validate with simulation
+| Component | Status | Package |
+|-----------|--------|---------|
+| Domain types & interfaces | Done | `pkg/model/`, `pkg/ports/` |
+| Scaling Engine | Done | `internal/engine/scaling/` |
+| Placement Engine | Done | `internal/engine/placement/` |
+| Preemption Engine | Done | `internal/engine/preemption/` |
+| Rebalancing Engine | Done | `internal/engine/rebalancing/` |
+| Plan Generator | Done | `internal/plangen/` |
+| Executor | Done | `internal/executor/` |
+| World State | Done | `internal/worldstate/` |
+| Event Ingestion | Done | `internal/ingestion/` |
+| Control Loop | Done | `internal/controlloop/` |
+| K8s ClusterClient | Done | `internal/k8sclient/` |
+| K8s Aggregator (ClusterAggregator impl) | Done | `internal/k8saggregator/` |
+| YAML ConfigStore | Done | `internal/configstore/` |
+| AlwaysLeader (LeaderElector impl) | Done | `internal/leaderelect/` |
+| SQLite Event Log | Done | `internal/eventlog/` |
+| HTTP API + SSE | Done | `internal/apiserver/` |
+| React Dashboard | Done | `web/` |
+| Main binary wiring | Done | `cmd/schedulator/` |
+| Kind + KWOK demo setup | Done | `deploy/kind/` |
+| Cache Registry impl | Not started | — |
+| Performance Profiler impl | Not started | — |
+| Real vLLM metric scraping | Not started | — |
+| Distributed leader election (K8s Lease) | Not started | — |
+
+---
+
+## 11. Next Steps
+
+1. ~~Define API contracts for Traffic Gateway and Cluster Aggregator~~ → Done: `pkg/ports/` interfaces defined; K8s Aggregator implemented
+2. ~~Prototype Scaling Engine with real traffic patterns~~ → Done: full implementation with table-driven tests
+3. ~~Implement Placement Engine scoring function~~ → Done: cache-tier weighted scoring with all proposal constants
 4. Set up Volcano in test clusters with GPU bin-packing config
-5. Build observability dashboards for scheduling decisions
+5. ~~Build observability dashboards for scheduling decisions~~ → Done: React dashboard with fleet overview, event stream, GPU timeline
+6. Implement real vLLM metric scraping in K8s Aggregator (currently returns zero metrics)
+7. Implement concrete `CacheRegistry` and `PerformanceProfiler` adapters
+8. Replace `AlwaysLeader` with K8s Lease-based leader election for HA
+9. Load testing with simulated workloads to tune scoring weights and scaling thresholds
+10. End-to-end demo with real vLLM workloads on Kind + KWOK clusters
