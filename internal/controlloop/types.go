@@ -6,18 +6,20 @@ import (
 	"github.com/hsubbaraj/schedulator/internal/engine/scaling"
 	"github.com/hsubbaraj/schedulator/internal/eventlog"
 	"github.com/hsubbaraj/schedulator/internal/ingestion"
+	"github.com/hsubbaraj/schedulator/internal/worldstate"
 	"github.com/hsubbaraj/schedulator/pkg/model"
 )
 
 // CycleSummary is the payload for the "cycle_summary" SSE event, published
 // at the end of every scheduling cycle.
 type CycleSummary struct {
-	TriggerKinds     []ingestion.EventKind                   `json:"trigger_kinds"`
-	ScalingDecisions map[model.AppID]scaling.ScalingDecision  `json:"scaling_decisions"`
-	VLLMMetrics      map[model.AppID]model.VLLMMetrics        `json:"vllm_metrics"`
-	Placement        PlacementSummary                         `json:"placement"`
-	Execution        ExecutionSummary                         `json:"execution"`
-	CycleDurationMs  int64                                    `json:"cycle_duration_ms"`
+	TriggerKinds     []ingestion.EventKind                  `json:"trigger_kinds"`
+	ScalingDecisions map[model.AppID]scaling.ScalingDecision `json:"scaling_decisions"`
+	VLLMMetrics      map[model.AppID]model.VLLMMetrics       `json:"vllm_metrics"`
+	WorldState       worldstate.WorldStateSnapshot          `json:"world_state"`
+	Placement        PlacementSummary                        `json:"placement"`
+	Execution        ExecutionSummary                        `json:"execution"`
+	CycleDurationMs  int64                                   `json:"cycle_duration_ms"`
 }
 
 // PlacementSummary summarises placement decisions for one cycle.

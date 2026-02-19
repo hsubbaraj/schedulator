@@ -5,7 +5,7 @@ import AppTable from './components/AppTable';
 import EventStream from './components/EventStream';
 import GpuTimeline from './components/GpuTimeline';
 import ReservationMonitor from './components/ReservationMonitor';
-import ControlLoopPanel from './components/ControlLoopPanel';
+import ControlLoopTable from './components/ControlLoopTable';
 import MetricInjectionPanel from './components/MetricInjectionPanel';
 import type { Replica, GPUReservation } from './types';
 
@@ -51,7 +51,7 @@ export default function App() {
 
           {/* Control Loop Monitoring */}
           <section>
-            <ControlLoopPanel cycleHistory={cycleHistory} />
+            <ControlLoopTable cycleHistory={cycleHistory} />
           </section>
 
           {/* Fleet Overview */}

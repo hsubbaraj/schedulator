@@ -335,6 +335,7 @@ func (cl *ControlLoop) buildCycleSummary(
 		TriggerKinds:     triggerKinds,
 		ScalingDecisions: scalingDecisions,
 		VLLMMetrics:      snap.VLLMMetrics,
+		WorldState:       snap,
 		Placement: PlacementSummary{
 			ScaleUpCount:    len(placements.ScaleUps),
 			ScaleDownCount:  len(placements.ScaleDowns),
