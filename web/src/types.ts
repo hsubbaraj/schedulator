@@ -133,6 +133,7 @@ export interface SSEEvent {
 export interface CycleSummary {
   trigger_kinds: string[];
   scaling_decisions: Record<string, ScalingDecision>;
+  vllm_metrics?: Record<string, VLLMMetrics>;
   placement: PlacementSummary;
   execution: ExecutionSummary;
   cycle_duration_ms: number;

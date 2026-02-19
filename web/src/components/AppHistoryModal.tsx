@@ -19,6 +19,7 @@ export default function AppHistoryModal({ app, state, cycleHistory, scalingConfi
         try {
           const summary = JSON.parse(ev.detail_json) as CycleSummary;
           const decision = summary.scaling_decisions[app.AppID];
+          const vllm = summary.vllm_metrics?.[app.AppID];
           if (!decision) return null;
           return {
             time: new Date(ev.timestamp).toLocaleTimeString(),
@@ -31,6 +32,7 @@ export default function AppHistoryModal({ app, state, cycleHistory, scalingConfi
             direction: decision.Direction,
             approved: decision.ScaleActionApproved,
             slaBreach: decision.SLABreach,
+            ttft: vllm?.P99TimeToFirstTokenMs || 0,
           };
         } catch {
           return null;
@@ -108,7 +110,7 @@ export default function AppHistoryModal({ app, state, cycleHistory, scalingConfi
               {/* Scaling Chart */}
               <div className="bg-gray-950 rounded-lg p-6 border border-gray-800">
                 <h4 className="text-sm font-semibold mb-6 text-gray-300">Target vs. Running Replicas (Last 100 Cycles)</h4>
-                <div className="h-80 w-full">
+                <div className="h-64 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <LineChart data={historyData.slice(-100)}>
                       <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
@@ -162,27 +164,94 @@ export default function AppHistoryModal({ app, state, cycleHistory, scalingConfi
                 </div>
               </div>
 
-              {/* Scaling Logs */}
+              {/* SLA History Chart */}
+              <div className="bg-gray-950 rounded-lg p-6 border border-gray-800">
+                <h4 className="text-sm font-semibold mb-6 text-gray-300">TTFT P99 SLA History (Last 100 Cycles)</h4>
+                <div className="h-64 w-full">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <LineChart data={historyData.slice(-100)}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" vertical={false} />
+                      <XAxis 
+                        dataKey="time" 
+                        stroke="#9CA3AF" 
+                        fontSize={10} 
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis 
+                        stroke="#9CA3AF" 
+                        fontSize={10} 
+                        tickLine={false}
+                        axisLine={false}
+                        label={{ value: 'ms', angle: -90, position: 'insideLeft', fill: '#9CA3AF', fontSize: 10 }}
+                      />
+                      <Tooltip 
+                        contentStyle={{ backgroundColor: '#111827', borderColor: '#374151', fontSize: '12px' }}
+                        itemStyle={{ fontSize: '12px' }}
+                      />
+                      <Line 
+                        type="monotone" 
+                        dataKey="ttft" 
+                        name="P99 TTFT" 
+                        stroke="#EC4899" 
+                        strokeWidth={2} 
+                        dot={false}
+                        activeDot={{ r: 4 }}
+                      />
+                      {app.SLA?.MaxP99TTFTMs > 0 && (
+                        <Line
+                          type="step"
+                          dataKey={() => app.SLA.MaxP99TTFTMs}
+                          name="SLA Target"
+                          stroke="#EF4444"
+                          strokeWidth={1}
+                          strokeDasharray="5 5"
+                          dot={false}
+                        />
+                      )}
+                    </LineChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+
+              {/* Replicas List */}
               <div>
-                <h4 className="text-sm font-semibold mb-3 text-gray-300">Recent Scaling Events</h4>
-                <div className="space-y-2">
-                  {historyData.filter(d => d.approved && d.direction !== 'unchanged').slice(-10).reverse().map((d, i) => (
-                    <div key={i} className="flex items-center justify-between p-3 bg-gray-800 rounded-lg border border-gray-700">
-                      <div className="flex items-center gap-3">
-                        <span className={`px-2 py-0.5 rounded text-xs font-bold ${
-                          d.direction === 'up' ? 'bg-blue-900 text-blue-300' : 'bg-orange-900 text-orange-300'
-                        }`}>
-                          SCALE {d.direction.toUpperCase()}
-                        </span>
-                        <span className="text-sm text-gray-200">
-                          {d.current} to {d.target} replicas
-                        </span>
-                      </div>
-                      <div className="text-xs text-gray-500">
-                        {d.timestamp.toLocaleTimeString()} via {d.signal}
-                      </div>
+                <h4 className="text-sm font-semibold mb-3 text-gray-300">Active Replicas</h4>
+                <div className="bg-gray-800 rounded-lg border border-gray-700 overflow-hidden">
+                  <table className="w-full text-left text-sm">
+                    <thead className="bg-gray-900/50 text-gray-400 text-xs uppercase tracking-wider">
+                      <tr>
+                        <th className="px-4 py-2 font-medium">Replica ID</th>
+                        <th className="px-4 py-2 font-medium">Cluster</th>
+                        <th className="px-4 py-2 font-medium">Node</th>
+                        <th className="px-4 py-2 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-700/50">
+                      {Object.values(state.Replicas)
+                        .filter(r => r.AppID === app.AppID)
+                        .sort((a, b) => a.ReplicaID.localeCompare(b.ReplicaID))
+                        .map((r) => (
+                          <tr key={r.ReplicaID} className="hover:bg-gray-750 transition-colors">
+                            <td className="px-4 py-3 font-mono text-xs text-gray-200">{r.ReplicaID}</td>
+                            <td className="px-4 py-3 text-gray-300">{r.ClusterID}</td>
+                            <td className="px-4 py-3 text-gray-400 text-xs">{r.NodeID}</td>
+                            <td className="px-4 py-3">
+                              <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase ${
+                                r.Status === 'running' ? 'bg-green-900 text-green-300' : 'bg-yellow-900 text-yellow-300'
+                              }`}>
+                                {r.Status}
+                              </span>
+                            </td>
+                          </tr>
+                        ))}
+                    </tbody>
+                  </table>
+                  {Object.values(state.Replicas).filter(r => r.AppID === app.AppID).length === 0 && (
+                    <div className="text-center py-6 text-gray-500 italic text-sm">
+                      No active replicas found.
                     </div>
-                  ))}
+                  )}
                 </div>
               </div>
             </div>

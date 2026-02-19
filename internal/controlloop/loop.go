@@ -291,7 +291,7 @@ func (cl *ControlLoop) runCycle(ctx context.Context, events []ingestion.Event) e
 	cl.cycleDuration.Observe(time.Since(start).Seconds())
 
 	// 12. Publish cycle summary and log events
-	summary := cl.buildCycleSummary(events, scalingDecisions, placements, plan, result, durationMs)
+	summary := cl.buildCycleSummary(events, scalingDecisions, placements, plan, result, snap, durationMs)
 	cl.publishAndLog(ctx, summary, plan, result, placements)
 
 	return nil
@@ -304,6 +304,7 @@ func (cl *ControlLoop) buildCycleSummary(
 	placements model.PlacementDecisions,
 	plan model.ExecutionPlan,
 	result model.ExecutionResult,
+	snap worldstate.WorldStateSnapshot,
 	durationMs int64,
 ) CycleSummary {
 	// Deduplicate trigger kinds.
@@ -333,6 +334,7 @@ func (cl *ControlLoop) buildCycleSummary(
 	return CycleSummary{
 		TriggerKinds:     triggerKinds,
 		ScalingDecisions: scalingDecisions,
+		VLLMMetrics:      snap.VLLMMetrics,
 		Placement: PlacementSummary{
 			ScaleUpCount:    len(placements.ScaleUps),
 			ScaleDownCount:  len(placements.ScaleDowns),

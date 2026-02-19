@@ -88,11 +88,12 @@ func TestFullSync_EmptyCluster(t *testing.T) {
 		{ClusterID: "cluster-1", Clientset: clientset, Namespace: "default"},
 	}, tracer)
 
-	clusters, err := agg.FullSync(context.Background())
+	clusters, replicas, err := agg.FullSync(context.Background())
 	require.NoError(t, err)
 	require.Len(t, clusters, 1)
 	assert.Equal(t, "cluster-1", clusters[0].ClusterID)
 	assert.Empty(t, clusters[0].Nodes)
+	assert.Empty(t, replicas)
 }
 
 func TestFullSync_NodesWithGPUs(t *testing.T) {
@@ -107,10 +108,11 @@ func TestFullSync_NodesWithGPUs(t *testing.T) {
 		{ClusterID: "cluster-1", Clientset: clientset, Namespace: "default"},
 	}, tracer)
 
-	clusters, err := agg.FullSync(context.Background())
+	clusters, replicas, err := agg.FullSync(context.Background())
 	require.NoError(t, err)
 	require.Len(t, clusters, 1)
 	require.Len(t, clusters[0].Nodes, 3)
+	assert.Empty(t, replicas)
 
 	assert.Equal(t, 4, clusters[0].Nodes["node-1"].TotalGPUs)
 	assert.Equal(t, 4, clusters[0].Nodes["node-1"].FreeGPUs)
@@ -133,14 +135,15 @@ func TestFullSync_WithPods(t *testing.T) {
 		{ClusterID: "c1", Clientset: clientset, Namespace: "default"},
 	}, tracer)
 
-	clusters, err := agg.FullSync(context.Background())
+	clusters, replicas, err := agg.FullSync(context.Background())
 	require.NoError(t, err)
+	require.Len(t, replicas, 1)
 
 	node := clusters[0].Nodes["node-1"]
 	assert.Equal(t, 4, node.TotalGPUs)
-	assert.Equal(t, 2, node.AllocatedGPUs)
-	assert.Equal(t, 2, node.FreeGPUs)
-	assert.Len(t, node.Pods, 1)
+	assert.Equal(t, 0, node.AllocatedGPUs) // Reset during sync, populated by UpsertReplica in main
+	assert.Equal(t, 4, node.FreeGPUs)
+	assert.Empty(t, node.Pods)
 }
 
 func TestFullSync_MultipleClusters(t *testing.T) {
@@ -153,9 +156,10 @@ func TestFullSync_MultipleClusters(t *testing.T) {
 		{ClusterID: "c2", Clientset: cs2, Namespace: "default"},
 	}, tracer)
 
-	clusters, err := agg.FullSync(context.Background())
+	clusters, replicas, err := agg.FullSync(context.Background())
 	require.NoError(t, err)
 	assert.Len(t, clusters, 2)
+	assert.Empty(t, replicas)
 }
 
 func TestGetVLLMMetrics_ReturnsZeroMetrics(t *testing.T) {

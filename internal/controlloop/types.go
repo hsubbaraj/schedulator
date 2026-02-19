@@ -14,6 +14,7 @@ import (
 type CycleSummary struct {
 	TriggerKinds     []ingestion.EventKind                   `json:"trigger_kinds"`
 	ScalingDecisions map[model.AppID]scaling.ScalingDecision  `json:"scaling_decisions"`
+	VLLMMetrics      map[model.AppID]model.VLLMMetrics        `json:"vllm_metrics"`
 	Placement        PlacementSummary                         `json:"placement"`
 	Execution        ExecutionSummary                         `json:"execution"`
 	CycleDurationMs  int64                                    `json:"cycle_duration_ms"`

@@ -112,11 +112,15 @@ func addPodHandlers(informer cache.SharedIndexInformer, clusterID model.ClusterI
 				return
 			}
 			appID := pod.Labels[labelAppID]
+			replicaID := model.ReplicaID(pod.Labels[labelReplicaID])
+			if replicaID == "" {
+				replicaID = model.ReplicaID(appID + "-" + pod.Name)
+			}
 			eventCh <- model.ClusterEvent{
 				Kind:      model.ClusterEventPodTerminated,
 				ClusterID: clusterID,
 				NodeID:    pod.Spec.NodeName,
-				ReplicaID: model.ReplicaID(appID + "-" + pod.Name),
+				ReplicaID: replicaID,
 				AppID:     model.AppID(appID),
 				GPUs:      extractPodGPUs(pod),
 				Timestamp: time.Now(),
@@ -127,8 +131,11 @@ func addPodHandlers(informer cache.SharedIndexInformer, clusterID model.ClusterI
 
 func emitPodEvent(pod *corev1.Pod, clusterID model.ClusterID, eventCh chan<- model.ClusterEvent) {
 	appID := pod.Labels[labelAppID]
-	// ReplicaID must match the format used in FullSync: "appID-podName".
-	replicaID := model.ReplicaID(appID + "-" + pod.Name)
+	// ReplicaID must match the stable ID from labels.
+	replicaID := model.ReplicaID(pod.Labels[labelReplicaID])
+	if replicaID == "" {
+		replicaID = model.ReplicaID(appID + "-" + pod.Name)
+	}
 	gpus := extractPodGPUs(pod)
 	switch pod.Status.Phase {
 	case corev1.PodRunning:

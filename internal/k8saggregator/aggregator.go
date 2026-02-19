@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	labelAppID = "app.schedulator.io/app-id"
-	gpuResource = "nvidia.com/gpu"
+	labelAppID     = "app.schedulator.io/app-id"
+	labelReplicaID = "app.schedulator.io/replica-id"
+	gpuResource    = "nvidia.com/gpu"
 )
 
 // ClusterConfig describes a single cluster to watch.
@@ -72,22 +73,27 @@ func (a *K8sAggregator) WatchEvents(ctx context.Context) (<-chan model.ClusterEv
 }
 
 // FullSync lists all nodes and pods across all clusters and returns the current state.
-func (a *K8sAggregator) FullSync(ctx context.Context) ([]model.Cluster, error) {
+func (a *K8sAggregator) FullSync(ctx context.Context) ([]model.Cluster, []model.Replica, error) {
 	ctx, span := a.tracer.Start(ctx, "k8saggregator.full_sync",
 		trace.WithAttributes(attribute.Int("cluster_count", len(a.clusters))))
 	defer span.End()
 
 	clusters := make([]model.Cluster, 0, len(a.clusters))
+	var allReplicas []model.Replica
 	for _, cw := range a.clusters {
-		cluster, err := a.syncCluster(ctx, cw)
+		cluster, replicas, err := a.syncCluster(ctx, cw)
 		if err != nil {
-			return nil, fmt.Errorf("sync cluster %s: %w", cw.clusterID, err)
+			return nil, nil, fmt.Errorf("sync cluster %s: %w", cw.clusterID, err)
 		}
 		clusters = append(clusters, cluster)
+		allReplicas = append(allReplicas, replicas...)
 	}
 
-	span.SetAttributes(attribute.Int("clusters_synced", len(clusters)))
-	return clusters, nil
+	span.SetAttributes(
+		attribute.Int("clusters_synced", len(clusters)),
+		attribute.Int("replicas_synced", len(allReplicas)),
+	)
+	return clusters, allReplicas, nil
 }
 
 // GetVLLMMetrics returns zero metrics for the live demo. Real vLLM metric
@@ -100,10 +106,10 @@ func (a *K8sAggregator) GetVLLMMetrics(_ context.Context, appID model.AppID) (mo
 	}, nil
 }
 
-func (a *K8sAggregator) syncCluster(ctx context.Context, cw *clusterWatcher) (model.Cluster, error) {
+func (a *K8sAggregator) syncCluster(ctx context.Context, cw *clusterWatcher) (model.Cluster, []model.Replica, error) {
 	nodeList, err := cw.clientset.CoreV1().Nodes().List(ctx, metav1.ListOptions{})
 	if err != nil {
-		return model.Cluster{}, fmt.Errorf("list nodes: %w", err)
+		return model.Cluster{}, nil, fmt.Errorf("list nodes: %w", err)
 	}
 
 	labelSelector := labelAppID
@@ -111,40 +117,51 @@ func (a *K8sAggregator) syncCluster(ctx context.Context, cw *clusterWatcher) (mo
 		LabelSelector: labelSelector,
 	})
 	if err != nil {
-		return model.Cluster{}, fmt.Errorf("list pods: %w", err)
+		return model.Cluster{}, nil, fmt.Errorf("list pods: %w", err)
 	}
 
-	// Build node-to-pods map.
-	nodePods := make(map[string][]model.ReplicaID)
-	nodeAllocatedGPUs := make(map[string]int)
+	// Collect replicas.
+	var replicas []model.Replica
 	for i := range podList.Items {
 		pod := &podList.Items[i]
 		if pod.Spec.NodeName == "" {
 			continue
 		}
-		replicaID := pod.Labels[labelAppID] + "-" + pod.Name
-		nodePods[pod.Spec.NodeName] = append(nodePods[pod.Spec.NodeName], replicaID)
-		nodeAllocatedGPUs[pod.Spec.NodeName] += extractPodGPUs(pod)
+		appID := pod.Labels[labelAppID]
+		replicaID := model.ReplicaID(pod.Labels[labelReplicaID])
+		if replicaID == "" {
+			replicaID = model.ReplicaID(appID + "-" + pod.Name)
+		}
+
+		status := model.ReplicaStatusPending
+		if pod.Status.Phase == corev1.PodRunning {
+			status = model.ReplicaStatusRunning
+		}
+
+		replicas = append(replicas, model.Replica{
+			ReplicaID: replicaID,
+			AppID:     model.AppID(appID),
+			ClusterID: cw.clusterID,
+			NodeID:    pod.Spec.NodeName,
+			GPUs:      extractPodGPUs(pod),
+			Status:    status,
+			CreatedAt: pod.CreationTimestamp.Time,
+		})
 	}
 
 	nodes := make(map[model.NodeID]model.Node, len(nodeList.Items))
 	for i := range nodeList.Items {
 		node := &nodeList.Items[i]
 		totalGPUs := extractNodeGPUs(node)
-		allocated := nodeAllocatedGPUs[node.Name]
-		free := totalGPUs - allocated
-		if free < 0 {
-			free = 0
-		}
 
 		status := nodeStatusFromConditions(node)
 		nodes[node.Name] = model.Node{
 			NodeID:        node.Name,
 			ClusterID:     cw.clusterID,
 			TotalGPUs:     totalGPUs,
-			AllocatedGPUs: allocated,
-			FreeGPUs:      free,
-			Pods:          nodePods[node.Name],
+			AllocatedGPUs: 0,   // Initial sync will populate via UpsertReplica in main
+			FreeGPUs:      totalGPUs,
+			Pods:          nil, // Initial sync will populate via UpsertReplica in main
 			CachedModels:  make(map[model.ModelID]struct{}),
 			Status:        status,
 		}
@@ -153,7 +170,7 @@ func (a *K8sAggregator) syncCluster(ctx context.Context, cw *clusterWatcher) (mo
 	return model.Cluster{
 		ClusterID: cw.clusterID,
 		Nodes:     nodes,
-	}, nil
+	}, replicas, nil
 }
 
 func (a *K8sAggregator) startInformers(ctx context.Context, cw *clusterWatcher) error {

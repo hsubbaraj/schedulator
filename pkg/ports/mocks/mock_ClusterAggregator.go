@@ -23,7 +23,7 @@ func (_m *MockClusterAggregator) EXPECT() *MockClusterAggregator_Expecter {
 }
 
 // FullSync provides a mock function with given fields: ctx
-func (_m *MockClusterAggregator) FullSync(ctx context.Context) ([]model.Cluster, error) {
+func (_m *MockClusterAggregator) FullSync(ctx context.Context) ([]model.Cluster, []model.Replica, error) {
 	ret := _m.Called(ctx)
 
 	if len(ret) == 0 {
@@ -31,8 +31,9 @@ func (_m *MockClusterAggregator) FullSync(ctx context.Context) ([]model.Cluster,
 	}
 
 	var r0 []model.Cluster
-	var r1 error
-	if rf, ok := ret.Get(0).(func(context.Context) ([]model.Cluster, error)); ok {
+	var r1 []model.Replica
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context) ([]model.Cluster, []model.Replica, error)); ok {
 		return rf(ctx)
 	}
 	if rf, ok := ret.Get(0).(func(context.Context) []model.Cluster); ok {
@@ -43,13 +44,21 @@ func (_m *MockClusterAggregator) FullSync(ctx context.Context) ([]model.Cluster,
 		}
 	}
 
-	if rf, ok := ret.Get(1).(func(context.Context) error); ok {
+	if rf, ok := ret.Get(1).(func(context.Context) []model.Replica); ok {
 		r1 = rf(ctx)
 	} else {
-		r1 = ret.Error(1)
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).([]model.Replica)
+		}
 	}
 
-	return r0, r1
+	if rf, ok := ret.Get(2).(func(context.Context) error); ok {
+		r2 = rf(ctx)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
 }
 
 // MockClusterAggregator_FullSync_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FullSync'
@@ -70,12 +79,12 @@ func (_c *MockClusterAggregator_FullSync_Call) Run(run func(ctx context.Context)
 	return _c
 }
 
-func (_c *MockClusterAggregator_FullSync_Call) Return(_a0 []model.Cluster, _a1 error) *MockClusterAggregator_FullSync_Call {
-	_c.Call.Return(_a0, _a1)
+func (_c *MockClusterAggregator_FullSync_Call) Return(_a0 []model.Cluster, _a1 []model.Replica, _a2 error) *MockClusterAggregator_FullSync_Call {
+	_c.Call.Return(_a0, _a1, _a2)
 	return _c
 }
 
-func (_c *MockClusterAggregator_FullSync_Call) RunAndReturn(run func(context.Context) ([]model.Cluster, error)) *MockClusterAggregator_FullSync_Call {
+func (_c *MockClusterAggregator_FullSync_Call) RunAndReturn(run func(context.Context) ([]model.Cluster, []model.Replica, error)) *MockClusterAggregator_FullSync_Call {
 	_c.Call.Return(run)
 	return _c
 }

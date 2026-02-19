@@ -133,7 +133,7 @@ func run(ctx context.Context, addr string) error {
 	ws := worldstate.New(tracer, reg)
 
 	// Seed world state with a full sync.
-	clusters, err := aggregator.FullSync(ctx)
+	clusters, replicas, err := aggregator.FullSync(ctx)
 	if err != nil {
 		slog.Warn("full sync failed, starting with empty state", "error", err)
 	} else {
@@ -143,7 +143,10 @@ func run(ctx context.Context, addr string) error {
 				ws.UpsertNode(n)
 			}
 		}
-		slog.Info("initial sync complete", "clusters", len(clusters))
+		for _, r := range replicas {
+			ws.UpsertReplica(r)
+		}
+		slog.Info("initial sync complete", "clusters", len(clusters), "replicas", len(replicas))
 	}
 
 	// Seed applications.

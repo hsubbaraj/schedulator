@@ -197,7 +197,7 @@ func TestFindBestCluster_PrefersWarmCache(t *testing.T) {
 	}
 	snap.Applications["app-1"] = app
 
-	clusterID, constraints, ok := e.findBestCluster(context.Background(), app, snap, nil)
+	clusterID, constraints, ok := e.findBestCluster(context.Background(), app, snap, nil, nil)
 	require.True(t, ok)
 	assert.Equal(t, "cluster-a", clusterID)
 	assert.Equal(t, 4, constraints.RequiredGPUs)
@@ -231,7 +231,7 @@ func TestFindBestCluster_GPUMemoryDominates(t *testing.T) {
 	}
 	snap.Applications["app-1"] = app
 
-	clusterID, _, ok := e.findBestCluster(context.Background(), app, snap, nil)
+	clusterID, _, ok := e.findBestCluster(context.Background(), app, snap, nil, nil)
 	require.True(t, ok)
 	assert.Equal(t, "cluster-a", clusterID)
 	// cluster-a: 1000 + 50*0.5 + 30*1.0 = 1055

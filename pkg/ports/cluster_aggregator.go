@@ -12,7 +12,7 @@ type ClusterAggregator interface {
 	WatchEvents(ctx context.Context) (<-chan model.ClusterEvent, error)
 
 	// FullSync returns the complete state of all clusters for reconciliation.
-	FullSync(ctx context.Context) ([]model.Cluster, error)
+	FullSync(ctx context.Context) ([]model.Cluster, []model.Replica, error)
 
 	// GetVLLMMetrics fetches current vLLM runtime metrics for one application.
 	GetVLLMMetrics(ctx context.Context, appID model.AppID) (model.VLLMMetrics, error)
