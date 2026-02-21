@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/hsubbaraj/schedulator/internal/engine/placement"
+	"github.com/hsubbaraj/schedulator/internal/engine/preemption"
 	"github.com/hsubbaraj/schedulator/internal/engine/scaling"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
 	"github.com/hsubbaraj/schedulator/pkg/model"
@@ -19,6 +20,7 @@ type EventType string
 
 const (
 	EventMarkRunning EventType = "MARK_RUNNING"
+	EventClusterDown EventType = "CLUSTER_DOWN"
 )
 
 type SimulationEvent struct {
@@ -26,6 +28,7 @@ type SimulationEvent struct {
 	Type      EventType
 	ReplicaID string
 	AppID     string
+	TargetID  string
 }
 
 type Simulator struct {
@@ -33,6 +36,7 @@ type Simulator struct {
 	ws           *worldstate.WorldState
 	scaling      *scaling.ScalingEngine
 	placement    *placement.PlacementEngine
+	preemption   *preemption.PreemptionEngine
 	traffic      *TrafficGenerator
 	metrics      *MetricsCollector
 	currentTime  time.Time
@@ -67,26 +71,24 @@ func NewSimulator(
 		QueueTarget:          5.0,
 		KVCacheTarget:        0.6,
 		MaxScaleUpPerCycle:   5,
-		MaxScaleDownPerCycle: 1,
-		ScaleUpCooldown:      time.Second * 60,
-		ScaleDownCooldown:    time.Second * 300,
-		StabilizationCycles:  5,
+		MaxScaleDownPerCycle: 2,
+		ScaleUpCooldown:      time.Second * 5,
+		ScaleDownCooldown:    time.Second * 10,
+		StabilizationCycles:  1,
 	}
 
-	placementCfg := placement.PlacementConfig{
-		WeightFragmentation:          50.0,
-		WeightBalance:                30.0,
-		DefaultReservationTTLSeconds: 60,
-		ReservationTTLMultiplier:     2,
-	}
+	placementCfg := placement.DefaultPlacementConfig()
+	preemptionCfg := preemption.DefaultPreemptionConfig()
 
 	reg := prometheus.NewRegistry()
+	preemptionEngine := preemption.NewPreemptionEngine(preemptionCfg, tracer, reg)
 
 	sim := &Simulator{
 		cfg:          cfg,
 		ws:           ws,
 		scaling:      scaling.NewScalingEngine(scalingCfg, tracer, reg),
-		placement:    placement.NewPlacementEngine(placementCfg, nil, tracer, reg),
+		placement:    placement.NewPlacementEngine(placementCfg, preemptionEngine, tracer, reg),
+		preemption:   preemptionEngine,
 		traffic:      traffic,
 		metrics:      metrics,
 		currentTime:  time.Date(2026, 2, 20, 0, 0, 0, 0, time.UTC),
@@ -98,6 +100,7 @@ func NewSimulator(
 	}
 
 	sim.initializeTopology()
+	sim.scheduleFailures()
 	return sim, nil
 }
 
@@ -126,14 +129,39 @@ func (s *Simulator) initializeTopology() {
 		slaTTFT, _ := time.ParseDuration(appCfg.SLATTFT)
 		app := model.Application{
 			AppID:          appCfg.ID,
-			GPUsPerReplica: 1, // Default for now, should be in config
-			MinReplicas:    1,
+			GPUsPerReplica: appCfg.GPUsPerReplica,
+			Priority:       appCfg.Priority,
+			MinReplicas:    appCfg.MinReplicas,
 			SLA: model.SLA{
 				AppID:        appCfg.ID,
 				MaxP99TTFTMs: int(slaTTFT.Milliseconds()),
 			},
 		}
+		if app.GPUsPerReplica == 0 {
+			app.GPUsPerReplica = 1
+		}
 		s.ws.UpsertApplication(app)
+	}
+}
+
+func (s *Simulator) scheduleFailures() {
+	for _, f := range s.cfg.Failures {
+		d, err := time.ParseDuration(f.Time)
+		if err != nil {
+			continue
+		}
+		var evtType EventType
+		switch f.Type {
+		case "cluster_down":
+			evtType = EventClusterDown
+		default:
+			continue
+		}
+		s.eventQueue = append(s.eventQueue, SimulationEvent{
+			Time:     s.startTime.Add(d),
+			Type:     evtType,
+			TargetID: f.TargetID,
+		})
 	}
 }
 
@@ -188,6 +216,13 @@ func (s *Simulator) processEvents(ctx context.Context) {
 					r.Status = model.ReplicaStatusRunning
 					s.ws.UpsertReplica(r)
 				}
+			case EventClusterDown:
+				if cluster, ok := snap.Clusters[e.TargetID]; ok {
+					for _, node := range cluster.Nodes {
+						node.Status = model.NodeStatusDown
+						s.ws.UpsertNode(node)
+					}
+				}
 			}
 		} else {
 			remaining = append(remaining, e)
@@ -197,16 +232,22 @@ func (s *Simulator) processEvents(ctx context.Context) {
 }
 
 func (s *Simulator) applyDecisions(ctx context.Context, decisions model.PlacementDecisions) {
-	// 1. Create Reservations first (so they can be fulfilled)
+	// 1. Process Preemptions
+	for _, p := range decisions.Preemptions {
+		s.ws.DeleteReplica(p.VictimReplicaID)
+	}
+
+	// 2. Create Reservations
 	for _, r := range decisions.Reservations {
 		s.ws.CreateReservation(r)
 	}
 
-	// 2. Process ScaleUps and fulfill reservations
+	// 3. Process ScaleUps and fulfill reservations
 	for i, su := range decisions.ScaleUps {
-		nodeID := s.findNodeWithCapacity(ctx, su.ClusterID)
+		snap := s.ws.Snapshot(ctx)
+		app := snap.Applications[su.AppID]
+		nodeID := s.findNodeWithCapacity(ctx, su.ClusterID, app.GPUsPerReplica)
 		if nodeID == "" {
-			// Failed to schedule
 			continue
 		}
 
@@ -216,22 +257,20 @@ func (s *Simulator) applyDecisions(ctx context.Context, decisions model.Placemen
 			AppID:     su.AppID,
 			ClusterID: su.ClusterID,
 			NodeID:    nodeID,
-			GPUs:      1, // Should come from App
+			GPUs:      app.GPUsPerReplica,
 			Status:    model.ReplicaStatusPending,
 			CreatedAt: s.currentTime,
 		}
 		s.ws.UpsertReplica(replica)
 
-		// Fulfill reservation
 		if su.ReservationID != "" {
 			s.ws.FulfillReservation(su.ReservationID)
 		}
 
-		// Queue MarkRunning event
 		coldStart := time.Second * 60 // Default
-		for _, app := range s.cfg.Apps {
-			if app.ID == string(su.AppID) {
-				if d, err := time.ParseDuration(app.ColdStart); err == nil {
+		for _, appCfg := range s.cfg.Apps {
+			if appCfg.ID == string(su.AppID) {
+				if d, err := time.ParseDuration(appCfg.ColdStart); err == nil {
 					coldStart = d
 				}
 				break
@@ -251,7 +290,7 @@ func (s *Simulator) applyDecisions(ctx context.Context, decisions model.Placemen
 	}
 }
 
-func (s *Simulator) findNodeWithCapacity(ctx context.Context, clusterID string) string {
+func (s *Simulator) findNodeWithCapacity(ctx context.Context, clusterID string, gpus int) string {
 	snap := s.ws.Snapshot(ctx)
 	cluster, ok := snap.Clusters[clusterID]
 	if !ok {
@@ -259,7 +298,7 @@ func (s *Simulator) findNodeWithCapacity(ctx context.Context, clusterID string) 
 	}
 
 	for _, node := range cluster.Nodes {
-		if node.FreeGPUs >= 1 {
+		if node.Status == model.NodeStatusReady && node.FreeGPUs >= gpus {
 			return node.NodeID
 		}
 	}

@@ -1,0 +1,2 @@
+timestamp,app_id,rps,queue_depth,kv_util
+0,model-a,50,10,0.7

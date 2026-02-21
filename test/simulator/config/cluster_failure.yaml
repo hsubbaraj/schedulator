@@ -1,0 +1,26 @@
+name: "Cluster Failure and Rebalancing"
+duration: "3m"
+tick_interval: "1s"
+closed_loop: true
+topology:
+  clusters:
+    - id: "cluster-primary"
+      nodes: 10
+      gpus_per_node: 8
+    - id: "cluster-secondary"
+      nodes: 10
+      gpus_per_node: 8
+apps:
+  - id: "model-a"
+    priority: 1
+    gpus_per_replica: 2
+    min_replicas: 2
+    sla_ttft: "200ms"
+    cold_start: "2s"
+    throughput_per_replica: 5.0
+    profile: "test/fixtures/profiles/llama2-70b.json"
+failures:
+  - time: "60s"
+    type: "cluster_down"
+    target_id: "cluster-primary"
+workload: "test/simulator/traces/cluster_failure.csv"
