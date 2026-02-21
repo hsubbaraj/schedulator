@@ -1,0 +1,1 @@
+{"AppID": "model-a", "TPSPerReplica": 50.0, "TTFTP99Ms": 150.0, "ColdStartSeconds": 10.0, "WarmStartSeconds": 2.0}

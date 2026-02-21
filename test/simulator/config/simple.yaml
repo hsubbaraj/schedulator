@@ -1,0 +1,17 @@
+name: "Simple Scale Up"
+duration: "2m"
+tick_interval: "1s"
+closed_loop: true
+topology:
+  clusters:
+    - id: "cluster-1"
+      nodes: 10
+      gpus_per_node: 8
+apps:
+  - id: "model-a"
+    sla_ttft: "200ms"
+    cold_start: "10s"
+    throughput_per_replica: 5.0
+    max_queue_depth: 100.0
+    profile: "test/fixtures/profiles/llama2-70b.json"
+workload: "test/simulator/traces/simple.csv"

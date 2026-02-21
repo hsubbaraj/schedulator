@@ -300,8 +300,8 @@ func (e *ScalingEngine) applyStabilityControls(
 		decision.Direction = ScaleDirectionUp
 		decision.Signal = ScaleSignalNone
 
-		// Scale-up cooldown: don't scale up again too soon.
-		if !history.LastScaleUpAt.IsZero() && now.Sub(history.LastScaleUpAt) < e.cfg.ScaleUpCooldown {
+		// Scale-up cooldown: don't scale up again too soon, UNLESS there is an SLA breach.
+		if !slaBreach && !history.LastScaleUpAt.IsZero() && now.Sub(history.LastScaleUpAt) < e.cfg.ScaleUpCooldown {
 			decision.TargetCount = current
 			decision.Direction = ScaleDirectionUnchanged
 			e.stabilitySuppressed.WithLabelValues(appID, "cooldown").Inc()
