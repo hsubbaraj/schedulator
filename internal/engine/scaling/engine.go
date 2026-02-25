@@ -152,25 +152,45 @@ func (e *ScalingEngine) computeTargetReplicas(
 	_ model.PerformanceProfile,
 	currentCount int,
 ) (int, ScaleSignal) {
+	// multiplierCount ensures we can scale up from 0.
+	multiplierCount := float64(currentCount)
+	bootstrap := false
+	if currentCount == 0 {
+		multiplierCount = 1.0
+		bootstrap = true
+	}
+
 	// Queue pressure: avg queue > high watermark → scale up.
 	requiredForQueue := currentCount
 	if metrics.AvgWaitingQueueDepth > e.cfg.QueueHighWatermark && e.cfg.QueueTarget > 0 {
 		factor := metrics.AvgWaitingQueueDepth / e.cfg.QueueTarget
-		requiredForQueue = ceilInt(float64(currentCount) * factor)
+		if bootstrap {
+			requiredForQueue = 1
+		} else {
+			requiredForQueue = ceilInt(multiplierCount * factor)
+		}
 	}
 
 	// KV cache pressure: max KV cache > high watermark → scale up.
 	requiredForCache := currentCount
 	if metrics.MaxKVCacheUtilization > e.cfg.KVCacheHighWatermark {
 		factor := metrics.MaxKVCacheUtilization / e.cfg.KVCacheTarget
-		requiredForCache = ceilInt(float64(currentCount) * factor)
+		if bootstrap {
+			requiredForCache = 1
+		} else {
+			requiredForCache = ceilInt(multiplierCount * factor)
+		}
 	}
 
 	// SLA breach: P99 TTFT > SLA → scale up.
 	requiredForSLA := currentCount
 	if app.SLA.MaxP99TTFTMs > 0 && metrics.P99TimeToFirstTokenMs > float64(app.SLA.MaxP99TTFTMs) {
 		factor := metrics.P99TimeToFirstTokenMs / float64(app.SLA.MaxP99TTFTMs)
-		requiredForSLA = ceilInt(float64(currentCount) * factor)
+		if bootstrap {
+			requiredForSLA = 1
+		} else {
+			requiredForSLA = ceilInt(multiplierCount * factor)
+		}
 	}
 
 	// Scale-down: all metrics low → efficiency.

@@ -1,4 +1,6 @@
 timestamp,app_id,rps,queue_depth,kv_util
-0,low-pri,20,5,0.8
+0,low-pri,10,0,0.5
 0,high-pri,0,0,0.0
-30,high-pri,100,30,0.9
+20,high-pri,10,0,0.0
+50,high-pri,15,0,0.0
+80,high-pri,25,0,0.0

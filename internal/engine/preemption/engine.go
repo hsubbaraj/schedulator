@@ -3,6 +3,7 @@ package preemption
 import (
 	"context"
 	"fmt"
+	"log"
 	"math"
 	"sort"
 
@@ -107,6 +108,9 @@ func (e *PreemptionEngine) FindPreemptionOpportunity(
 	sortCandidates(p2Candidates, gpusNeeded, snap)
 	sortCandidates(p1Candidates, gpusNeeded, snap)
 
+	log.Printf("[DEBUG] Preemption: app=%s pri=%d needed=%d candidates: P2=%d P1=%d",
+		app.AppID, app.Priority, gpusNeeded, len(p2Candidates), len(p1Candidates))
+
 	// Select victims from P2 first.
 	victims, freed, targetCluster := e.selectVictims(p2Candidates, gpusNeeded, snap, "")
 
@@ -180,8 +184,13 @@ func (e *PreemptionEngine) selectVictims(
 		// min_replicas protection.
 		activeCount := countActiveReplicas(c.app.AppID, snap)
 		if activeCount-preemptingPerApp[c.app.AppID] <= c.app.MinReplicas {
+			log.Printf("[DEBUG] Preemption: skip %s (active=%d preempting=%d min=%d)",
+				c.replica.ReplicaID, activeCount, preemptingPerApp[c.app.AppID], c.app.MinReplicas)
 			continue
 		}
+
+		log.Printf("[DEBUG] Preemption: select %s from %s (gpus=%d)",
+			c.replica.ReplicaID, c.replica.ClusterID, c.replica.GPUs)
 
 		// First victim sets the target cluster.
 		if targetCluster == "" {
