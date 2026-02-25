@@ -1,0 +1,35 @@
+sequenceDiagram
+    participant CL as Control Loop
+    participant SE as Scaling Engine
+    participant WS as World State (Snapshot)
+    participant HIS as Scaling History (in WS)
+
+    CL->>SE: ComputeTargets(ctx, snapshot)
+    loop For each Application
+        SE->>WS: Get vLLMMetrics, PerformanceProfile
+        
+        Note over SE: computeTargetReplicas
+        SE->>SE: 1. Check Queue Pressure (QueueHighWatermark)
+        SE->>SE: 2. Check KV Cache Pressure (KVCacheHighWatermark)
+        SE->>SE: 3. Check SLA Breach (max_p99_ttft_ms)
+        SE->>SE: 4. Check Scale-Down Signal (Low utilization)
+        SE->>SE: Select max(signals) as raw_target
+
+        Note over SE: computeEffectiveTarget
+        SE->>WS: Count Running & Pending Replicas
+        SE->>SE: Check for Stale Pending Replicas (2x cold_start)
+        SE->>SE: Adjust target to account for in-flight replicas
+
+        Note over SE: applyStabilityControls
+        SE->>HIS: Get Scaling History (LastScaleUpAt, LastScaleDownAt)
+        alt target > current (Scale Up)
+            SE->>SE: Check ScaleUpCooldown
+        else target < current (Scale Down)
+            SE->>SE: Check ScaleDownCooldown
+            SE->>SE: Check Stabilization Window (consecutive signals)
+            SE->>SE: Bypass if SLA Breach
+        end
+
+        SE->>SE: Finalize ScalingDecision (AppID, Target, Signal, SLABreach)
+    end
+    SE-->>CL: map[AppID]ScalingDecision

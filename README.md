@@ -350,3 +350,58 @@ rm -f schedulator.db
 # Clean build artifacts
 make clean
 ```
+
+## Planning Simulator
+
+The **Planning Simulator** is an offline tool used to tune scheduling algorithms, perform capacity planning, and validate logic changes against historical or synthetic traces. It uses the actual production `ScalingEngine` and `PlacementEngine` but mocks the external world (clusters, time, and traffic).
+
+### Features
+*   **High Fidelity:** Uses real scheduling code and models `ColdStart` delays.
+*   **Closed Loop:** Dynamically calculates queue depth based on RPS vs. actual running replicas.
+*   **Scoring:** Outputs a weighted cost scorecard (SLA violations, utilization, churn).
+
+### Running the Simulator
+
+```bash
+# Run with the default simple scenario
+go run test/simulator/cmd/main.go --config test/simulator/config/simple.yaml
+
+# Run with a custom output file
+go run test/simulator/cmd/main.go --config my_scenario.yaml --output results.csv
+```
+
+### Scenario Configuration
+
+Scenarios are defined in YAML and include cluster topology, application SLAs, and traffic traces:
+
+```yaml
+name: "Spike Test"
+duration: "1h"
+tick_interval: "1s"
+closed_loop: true
+topology:
+  clusters:
+    - id: "cluster-1"
+      nodes: 10
+      gpus_per_node: 8
+apps:
+  - id: "model-a"
+    sla_ttft: "200ms"
+    cold_start: "60s"
+    throughput_per_replica: 5.0
+    max_queue_depth: 100.0
+workload: "test/simulator/traces/simple.csv"
+```
+
+### Interpreting Results
+
+The simulator outputs a **Scorecard** summary to the console:
+
+*   **SLA Violations:** Number of ticks where the queue depth exceeded the threshold.
+*   **Avg Utilization:** Percentage of total cluster GPUs actively used by `Running` replicas.
+*   **Scaling Ops:** Total number of scale-up/down decisions made.
+*   **Total Cost:** Weighted sum where lower is better ($Cost = W_{sla} \cdot V + W_{util} \cdot (1-U) + W_{churn} \cdot O$).
+
+Detailed per-tick logs are written to the output CSV file for further analysis (e.g., in Excel or Python).
+
+For more details, see [docs/planning-simulator.md](docs/planning-simulator.md).
