@@ -106,7 +106,12 @@ func (tg *TrafficGenerator) UpdateMetrics(ws *worldstate.WorldState, simTime tim
 			runningReplicas := 0
 			for _, r := range snap.Replicas {
 				if string(r.AppID) == appID && r.Status == model.ReplicaStatusRunning {
-					runningReplicas++
+					// Only count replicas on healthy nodes.
+					if cluster, ok := snap.Clusters[r.ClusterID]; ok {
+						if node, ok := cluster.Nodes[r.NodeID]; ok && node.Status == model.NodeStatusReady {
+							runningReplicas++
+						}
+					}
 				}
 			}
 

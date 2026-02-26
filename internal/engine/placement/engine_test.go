@@ -289,9 +289,9 @@ func TestComputePlacement_ScaleDownFirst(t *testing.T) {
 	}
 
 	result := e.ComputePlacement(context.Background(), snap, decisions)
-	assert.Len(t, result.ScaleDowns, 2)   // 3 - 1 = 2 scale-downs
-	assert.Empty(t, result.ScaleUps)       // no scale-ups
-	assert.Empty(t, result.Reservations)   // no reservations
+	assert.Len(t, result.ScaleDowns, 2)  // 3 - 1 = 2 scale-downs
+	assert.Empty(t, result.ScaleUps)     // no scale-ups
+	assert.Empty(t, result.Reservations) // no reservations
 }
 
 func TestComputePlacement_FailureDomainSpread(t *testing.T) {

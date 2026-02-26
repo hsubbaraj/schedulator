@@ -1,0 +1,47 @@
+sequenceDiagram
+    participant CL as Control Loop
+    participant PE as Placement Engine
+    participant WS as World State (Snapshot)
+    participant PR as Preemption Engine
+
+    CL->>PE: ComputePlacement(ctx, snapshot, scalingDecisions)
+    
+    Note over PE: 1. Process Scale-Downs (delta < 0)
+    loop For each App with delta < 0
+        PE->>PE: selectScaleDownVictims
+        Note right of PE: Priority: High fragmentation, Non-cached, Over-represented
+        PE->>PE: Append ScaleDownDecisions
+    end
+
+    Note over PE: 2. Process Scale-Ups (delta > 0)
+    Note right of PE: Sorted by App Priority (P0 First)
+    loop For each replica to add
+        PE->>PE: findBestCluster
+        loop For each Cluster
+            PE->>WS: Check Hard Constraints (Free GPUs, Spread Limit)
+            alt Fits
+                PE->>PE: computeCacheScore (GPU_MEMORY > NVME > STORAGE > REMOTE)
+                PE->>PE: computePackingScore (Tightest Fit)
+                PE->>PE: computeBalanceScore (1 - utilization)
+                PE->>PE: Total Score = Cache + Frag + Balance
+            end
+        end
+
+        alt Cluster Found
+            PE->>PE: Create GPUReservation (TTL = 2x cold_start)
+            PE->>PE: Update localReservations (track capacity in-cycle)
+            PE->>PE: Append ScaleUpDecision
+        else No Cluster Found
+            PE->>PR: FindPreemptionOpportunity(app)
+            PR-->>PE: PreemptionPlan (Victims, TargetCluster, Constraints)
+            alt Preemption Possible
+                PE->>PE: Append PreemptionDecisions
+                PE->>PE: Create GPUReservation
+                PE->>PE: Append ScaleUpDecision
+            else Preemption Failed
+                PE->>PE: Record No Capacity Metric
+            end
+        end
+    end
+
+    PE-->>CL: PlacementDecisions (ScaleUps, ScaleDowns, Preemptions)

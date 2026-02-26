@@ -1,6 +1,7 @@
 package rebalancing
 
 import (
+	"github.com/hsubbaraj/schedulator/internal/engine/engineutil"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
 	"github.com/hsubbaraj/schedulator/pkg/model"
 )
@@ -173,8 +174,8 @@ func hasCachedModel(
 // pending replicas.
 func countRunningReplicas(appID model.AppID, snap worldstate.WorldStateSnapshot) int {
 	count := 0
-	for _, r := range snap.Replicas {
-		if r.AppID == appID && r.Status == model.ReplicaStatusRunning {
+	for _, r := range engineutil.ReplicasForApp(snap, appID) {
+		if r.Status == model.ReplicaStatusRunning {
 			count++
 		}
 	}

@@ -16,12 +16,21 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "test/simulator/config/simple.yaml", "Path to scenario config file")
+	configPath := flag.String("config", "", "Path to scenario config file")
 	outputPath := flag.String("output", "simulation_results.csv", "Path to output CSV file")
 	flag.Parse()
 
+	actualConfigPath := *configPath
+	if actualConfigPath == "" {
+		if flag.NArg() > 0 {
+			actualConfigPath = flag.Arg(0)
+		} else {
+			actualConfigPath = "test/simulator/config/simple.yaml"
+		}
+	}
+
 	// Load config
-	cfgBytes, err := os.ReadFile(*configPath)
+	cfgBytes, err := os.ReadFile(actualConfigPath)
 	if err != nil {
 		log.Fatalf("failed to read config: %v", err)
 	}

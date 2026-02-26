@@ -43,7 +43,7 @@ func baseApp(id string, priority, gpus, minReplicas int) model.Application {
 }
 
 func addReplica(snap *worldstate.WorldStateSnapshot, id, appID, clusterID, nodeID string, gpus int) {
-	snap.Replicas[id] = model.Replica{
+	r := model.Replica{
 		ReplicaID: id,
 		AppID:     appID,
 		ClusterID: clusterID,
@@ -52,6 +52,7 @@ func addReplica(snap *worldstate.WorldStateSnapshot, id, appID, clusterID, nodeI
 		Status:    model.ReplicaStatusRunning,
 		CreatedAt: snap.TakenAt.Add(-time.Minute),
 	}
+	snap.Replicas[id] = r
 }
 
 func TestPreemption_P0CanPreemptP2(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/hsubbaraj/schedulator/internal/engine/engineutil"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
 	"github.com/hsubbaraj/schedulator/pkg/model"
 )
@@ -95,10 +96,7 @@ func (e *PlacementEngine) selectScaleDownVictims(
 	// Count replicas per cluster for this app.
 	clusterCounts := make(map[model.ClusterID]int)
 	var candidates []candidate
-	for _, r := range snap.Replicas {
-		if r.AppID != appID {
-			continue
-		}
+	for _, r := range engineutil.ReplicasForApp(snap, appID) {
 		if r.Status != model.ReplicaStatusRunning && r.Status != model.ReplicaStatusPending {
 			continue
 		}
@@ -106,10 +104,7 @@ func (e *PlacementEngine) selectScaleDownVictims(
 	}
 
 	app := snap.Applications[appID]
-	for _, r := range snap.Replicas {
-		if r.AppID != appID {
-			continue
-		}
+	for _, r := range engineutil.ReplicasForApp(snap, appID) {
 		if r.Status != model.ReplicaStatusRunning && r.Status != model.ReplicaStatusPending {
 			continue
 		}
