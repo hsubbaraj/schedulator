@@ -1,3 +1,5 @@
+//go:build !solver
+
 package solver_test
 
 import (
