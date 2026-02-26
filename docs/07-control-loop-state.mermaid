@@ -38,18 +38,17 @@ stateDiagram-v2
         AllowChange --> [*]: Apply new target
     }
 
-    CheckStabilityControls --> ComputePlacement: Stabilized scaling decisions
+    CheckStabilityControls --> RunPlanner: Stabilized scaling decisions
 
-    state ComputePlacement {
-        [*] --> ProcessScaleDowns
-        ProcessScaleDowns --> ProcessScaleUps: Free capacity first
-        ProcessScaleUps --> CheckPreemption: For each app by priority
-        CheckPreemption --> ProcessScaleUps: Continue or preempt
-        ProcessScaleUps --> OptionalRebalance: All scale-ups done
-        OptionalRebalance --> [*]: Plan ready
+    state RunPlanner {
+        [*] --> PrimaryPlan
+        PrimaryPlan --> [*]: PlannerResult ready
+        --
+        [*] --> ShadowPlan: shadow mode only
+        ShadowPlan --> [*]: metrics recorded\n(result discarded)
     }
 
-    ComputePlacement --> ValidatePlan: PlacementPlan generated
+    RunPlanner --> ValidatePlan: PlannerResult generated
 
     ValidatePlan --> Execute: Sanity checks pass
     ValidatePlan --> Idle: Invalid plan, log error
@@ -88,13 +87,22 @@ stateDiagram-v2
         SLA breach: bypass all controls
     end note
 
-    note right of OptionalRebalance
-        Blue-green migration strategy:
-        scale-up new replica first,
-        scale-down old only after
-        new is running. Disruption
-        budget: max 2 per cycle,
-        min 0.15 frag improvement
+    note right of RunPlanner
+        planner.Plan(snap, targets) called
+        once per tick. Backend selected by
+        SCHEDULATOR_PLANNER_MODE env var:
+        • heuristic (default): PlacementEngine
+          then RebalancingEngine sequentially
+        • solver: CP-SAT joint optimizer,
+          shadow cap pre-pass; falls back
+          to heuristic on timeout
+        • shadow: primary runs on hot path,
+          shadow runs in detached goroutine
+          for A/B metric comparison only
+
+        PrimaryPlan and ShadowPlan are
+        concurrent regions; ShadowPlan is
+        active only in shadow mode.
     end note
 
     note right of Execute
@@ -103,5 +111,7 @@ stateDiagram-v2
         in parallel where possible.
         Reservations created before
         dispatch, fulfilled/expired
-        on completion/timeout
+        on completion/timeout.
+        Shadow-slot migrations sequenced
+        before dependent scale-ups.
     end note

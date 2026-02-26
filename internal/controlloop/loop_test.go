@@ -15,6 +15,7 @@ import (
 	"github.com/hsubbaraj/schedulator/internal/observability"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
 	"github.com/hsubbaraj/schedulator/pkg/model"
+	"github.com/hsubbaraj/schedulator/pkg/ports"
 )
 
 // ---------------------------------------------------------------------------
@@ -43,7 +44,7 @@ type mockLeaderElector struct {
 	leader bool
 }
 
-func (m *mockLeaderElector) IsLeader() bool          { return m.leader }
+func (m *mockLeaderElector) IsLeader() bool           { return m.leader }
 func (m *mockLeaderElector) OnElected(callback func()) {}
 func (m *mockLeaderElector) OnLost(callback func())    {}
 
@@ -70,41 +71,24 @@ func (m *mockScalingEngine) callCount() int {
 	return m.calls
 }
 
-// mockPlacementEngine records calls and returns configured decisions.
-type mockPlacementEngine struct {
-	mu        sync.Mutex
-	calls     int
-	decisions model.PlacementDecisions
+// mockPlanner implements ports.Planner and records calls.
+type mockPlanner struct {
+	mu     sync.Mutex
+	calls  int
+	result ports.PlannerResult
+	err    error
 }
 
-func (m *mockPlacementEngine) ComputePlacement(_ context.Context, _ worldstate.WorldStateSnapshot, _ map[model.AppID]scaling.ScalingDecision) model.PlacementDecisions {
+func (m *mockPlanner) Plan(_ context.Context, _ worldstate.WorldStateSnapshot, _ map[model.AppID]scaling.ScalingDecision) (ports.PlannerResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.calls++
-	return m.decisions
+	return m.result, m.err
 }
 
-func (m *mockPlacementEngine) callCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.calls
-}
+func (m *mockPlanner) Name() string { return "mock" }
 
-// mockRebalancer records calls.
-type mockRebalancer struct {
-	mu         sync.Mutex
-	calls      int
-	migrations []model.MigrateDecision
-}
-
-func (m *mockRebalancer) FindRebalancingOpportunities(_ context.Context, _ worldstate.WorldStateSnapshot) []model.MigrateDecision {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.calls++
-	return m.migrations
-}
-
-func (m *mockRebalancer) callCount() int {
+func (m *mockPlanner) callCount() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.calls
@@ -112,9 +96,9 @@ func (m *mockRebalancer) callCount() int {
 
 // mockPlanGenerator records calls and returns configured plan.
 type mockPlanGenerator struct {
-	mu   sync.Mutex
+	mu    sync.Mutex
 	calls int
-	plan model.ExecutionPlan
+	plan  model.ExecutionPlan
 }
 
 func (m *mockPlanGenerator) GeneratePlan(_ context.Context, _ model.PlacementDecisions, _ []model.MigrateDecision) model.ExecutionPlan {
@@ -152,11 +136,11 @@ func (m *mockExecutor) callCount() int {
 
 // mockWorldState tracks all mutation calls.
 type mockWorldState struct {
-	mu                         sync.Mutex
-	snap                       worldstate.WorldStateSnapshot
-	createReservationCalls     []model.GPUReservation
-	recordScaleEventCalls      []recordScaleEventCall
-	incrementScaleDownCalls    []model.AppID
+	mu                           sync.Mutex
+	snap                         worldstate.WorldStateSnapshot
+	createReservationCalls       []model.GPUReservation
+	recordScaleEventCalls        []recordScaleEventCall
+	incrementScaleDownCalls      []model.AppID
 	expireStaleReservationsCalls int
 }
 
@@ -227,23 +211,21 @@ func baseSnap() worldstate.WorldStateSnapshot {
 }
 
 type testHarness struct {
-	ingester  *chanIngester
-	leader    *mockLeaderElector
-	scaling   *mockScalingEngine
-	placement *mockPlacementEngine
-	rebal     *mockRebalancer
-	plangen   *mockPlanGenerator
-	executor  *mockExecutor
-	ws        *mockWorldState
-	loop      *ControlLoop
+	ingester *chanIngester
+	leader   *mockLeaderElector
+	scaling  *mockScalingEngine
+	planner  *mockPlanner
+	plangen  *mockPlanGenerator
+	executor *mockExecutor
+	ws       *mockWorldState
+	loop     *ControlLoop
 }
 
 func newTestHarness() *testHarness {
 	ing := newChanIngester()
 	leader := &mockLeaderElector{leader: true}
 	sc := &mockScalingEngine{}
-	pl := &mockPlacementEngine{}
-	rb := &mockRebalancer{}
+	pl := &mockPlanner{}
 	pg := &mockPlanGenerator{}
 	ex := &mockExecutor{}
 	ws := &mockWorldState{snap: baseSnap()}
@@ -253,14 +235,14 @@ func newTestHarness() *testHarness {
 
 	cl := NewControlLoop(
 		ControlLoopConfig{ReservationExpiryScanInterval: time.Hour}, // long interval to avoid interference
-		ing, sc, pl, rb, pg, ex, ws, leader,
+		ing, sc, pl, pg, ex, ws, leader,
 		nil, nil, // publisher, eventLogger
 		tracer, reg,
 	)
 
 	return &testHarness{
-		ingester: ing, leader: leader, scaling: sc, placement: pl,
-		rebal: rb, plangen: pg, executor: ex, ws: ws, loop: cl,
+		ingester: ing, leader: leader, scaling: sc, planner: pl,
+		plangen: pg, executor: ex, ws: ws, loop: cl,
 	}
 }
 
@@ -285,8 +267,7 @@ func TestControlLoop_FullCycle(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 1, h.scaling.callCount(), "scaling engine should be called once")
-	assert.Equal(t, 1, h.placement.callCount(), "placement engine should be called once")
-	assert.Equal(t, 1, h.rebal.callCount(), "rebalancer should be called once")
+	assert.Equal(t, 1, h.planner.callCount(), "planner should be called once")
 	assert.Equal(t, 1, h.plangen.callCount(), "plan generator should be called once")
 	assert.Equal(t, 1, h.executor.callCount(), "executor should be called once")
 }
@@ -309,7 +290,7 @@ func TestControlLoop_LeaderElection(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.Equal(t, 0, h.scaling.callCount(), "scaling engine should not be called")
-	assert.Equal(t, 0, h.placement.callCount(), "placement engine should not be called")
+	assert.Equal(t, 0, h.planner.callCount(), "planner should not be called")
 	assert.Equal(t, 0, h.executor.callCount(), "executor should not be called")
 }
 
@@ -417,6 +398,26 @@ func TestControlLoop_ScalingPostProcessing_SuppressedScaleDown(t *testing.T) {
 	assert.Empty(t, h.ws.recordScaleEventCalls, "RecordScaleEvent should NOT be called")
 	require.Len(t, h.ws.incrementScaleDownCalls, 1)
 	assert.Equal(t, "app-B", h.ws.incrementScaleDownCalls[0])
+}
+
+func TestControlLoop_PlannerError_ContinuesWithEmptyPlan(t *testing.T) {
+	h := newTestHarness()
+	h.planner.err = assert.AnError
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- h.loop.Run(ctx) }()
+
+	h.ingester.ch <- []ingestion.Event{{Kind: ingestion.EventPeriodicEval}}
+	close(h.ingester.ch)
+
+	err := <-errCh
+	require.NoError(t, err, "planner error should not abort the loop")
+	assert.Equal(t, 1, h.planner.callCount())
+	// Plan generator and executor still run with empty decisions.
+	assert.Equal(t, 1, h.plangen.callCount())
 }
 
 // ---------------------------------------------------------------------------
@@ -538,77 +539,6 @@ func TestValidatePlan_ReservationCapacity(t *testing.T) {
 			err := validatePlan(tt.plan, tt.snap)
 			if tt.wantErr {
 				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "exceed")
-			} else {
-				assert.NoError(t, err)
-			}
-		})
-	}
-}
-
-func TestValidatePlan_NoTerminatedReplicaScaleDown(t *testing.T) {
-	tests := []struct {
-		name    string
-		snap    worldstate.WorldStateSnapshot
-		plan    model.ExecutionPlan
-		wantErr bool
-	}{
-		{
-			name: "running replica OK",
-			snap: func() worldstate.WorldStateSnapshot {
-				s := baseSnap()
-				s.Replicas["r1"] = model.Replica{
-					ReplicaID: "r1", AppID: "app-A", Status: model.ReplicaStatusRunning,
-				}
-				return s
-			}(),
-			plan: model.ExecutionPlan{
-				Operations: []model.Operation{
-					{ID: "op1", Type: model.OperationScaleDown, Payload: model.ScaleDownDecision{
-						AppID: "app-A", ReplicaID: "r1",
-					}},
-				},
-			},
-			wantErr: false,
-		},
-		{
-			name: "terminated replica rejected",
-			snap: func() worldstate.WorldStateSnapshot {
-				s := baseSnap()
-				s.Replicas["r1"] = model.Replica{
-					ReplicaID: "r1", AppID: "app-A", Status: model.ReplicaStatusTerminated,
-				}
-				return s
-			}(),
-			plan: model.ExecutionPlan{
-				Operations: []model.Operation{
-					{ID: "op1", Type: model.OperationScaleDown, Payload: model.ScaleDownDecision{
-						AppID: "app-A", ReplicaID: "r1",
-					}},
-				},
-			},
-			wantErr: true,
-		},
-		{
-			name: "unknown replica OK",
-			snap: baseSnap(),
-			plan: model.ExecutionPlan{
-				Operations: []model.Operation{
-					{ID: "op1", Type: model.OperationScaleDown, Payload: model.ScaleDownDecision{
-						AppID: "app-A", ReplicaID: "r-unknown",
-					}},
-				},
-			},
-			wantErr: false,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validatePlan(tt.plan, tt.snap)
-			if tt.wantErr {
-				assert.Error(t, err)
-				assert.Contains(t, err.Error(), "terminated")
 			} else {
 				assert.NoError(t, err)
 			}

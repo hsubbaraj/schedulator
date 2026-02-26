@@ -4,10 +4,11 @@ package model
 // scale-up, scale-down, and preemption decisions plus GPU reservations to
 // prevent double-booking.
 type PlacementDecisions struct {
-	ScaleUps     []ScaleUpDecision
-	ScaleDowns   []ScaleDownDecision
-	Preemptions  []PreemptionDecision
-	Reservations []GPUReservation
+	ScaleUps           []ScaleUpDecision
+	ScaleDowns         []ScaleDownDecision
+	Preemptions        []PreemptionDecision
+	Reservations       []GPUReservation
+	ClaimedShadowSlots []ShadowSlot // migrations committed by the solver; nil for HeuristicPlanner
 }
 
 // ScaleUpDecision instructs the executor to create a new single-replica

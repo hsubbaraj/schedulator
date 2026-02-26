@@ -32,14 +32,6 @@ type scalingComputer interface {
 	ComputeTargets(ctx context.Context, snap worldstate.WorldStateSnapshot) map[model.AppID]scaling.ScalingDecision
 }
 
-type placementComputer interface {
-	ComputePlacement(ctx context.Context, snap worldstate.WorldStateSnapshot, decisions map[model.AppID]scaling.ScalingDecision) model.PlacementDecisions
-}
-
-type rebalancer interface {
-	FindRebalancingOpportunities(ctx context.Context, snap worldstate.WorldStateSnapshot) []model.MigrateDecision
-}
-
 type planGenerator interface {
 	GeneratePlan(ctx context.Context, decisions model.PlacementDecisions, migrations []model.MigrateDecision) model.ExecutionPlan
 }
@@ -76,18 +68,17 @@ type ControlLoopConfig struct {
 
 // ControlLoop orchestrates the full scheduling cycle.
 type ControlLoop struct {
-	cfg             ControlLoopConfig
-	ingester        eventSource
-	scalingEngine   scalingComputer
-	placementEngine placementComputer
-	rebalancer      rebalancer
-	planGenerator   planGenerator
-	executor        planExecutor
-	worldState      worldStateManager
-	leaderElector   ports.LeaderElector
-	tracer          trace.Tracer
-	publisher       cycleSummaryPublisher // optional; may be nil
-	eventLogger     cycleEventLogger      // optional; may be nil
+	cfg           ControlLoopConfig
+	ingester      eventSource
+	scalingEngine scalingComputer
+	planner       ports.Planner
+	planGenerator planGenerator
+	executor      planExecutor
+	worldState    worldStateManager
+	leaderElector ports.LeaderElector
+	tracer        trace.Tracer
+	publisher     cycleSummaryPublisher // optional; may be nil
+	eventLogger   cycleEventLogger      // optional; may be nil
 
 	cyclesTotal     *prometheus.CounterVec
 	cycleDuration   prometheus.Histogram
@@ -102,8 +93,7 @@ func NewControlLoop(
 	cfg ControlLoopConfig,
 	ingester eventSource,
 	scalingEngine scalingComputer,
-	placementEngine placementComputer,
-	rebalancer rebalancer,
+	planner ports.Planner,
 	planGenerator planGenerator,
 	executor planExecutor,
 	worldState worldStateManager,
@@ -118,18 +108,17 @@ func NewControlLoop(
 	}
 
 	return &ControlLoop{
-		cfg:             cfg,
-		ingester:        ingester,
-		scalingEngine:   scalingEngine,
-		placementEngine: placementEngine,
-		rebalancer:      rebalancer,
-		planGenerator:   planGenerator,
-		executor:        executor,
-		worldState:      worldState,
-		leaderElector:   leaderElector,
-		publisher:       publisher,
-		eventLogger:     eventLogger,
-		tracer:          tracer,
+		cfg:           cfg,
+		ingester:      ingester,
+		scalingEngine: scalingEngine,
+		planner:       planner,
+		planGenerator: planGenerator,
+		executor:      executor,
+		worldState:    worldState,
+		leaderElector: leaderElector,
+		publisher:     publisher,
+		eventLogger:   eventLogger,
+		tracer:        tracer,
 
 		cyclesTotal: observability.MustNewCounterVec(reg, prometheus.CounterOpts{
 			Name: "schedulator_controlloop_cycles_total",
@@ -225,8 +214,16 @@ func (cl *ControlLoop) runCycle(ctx context.Context, events []ingestion.Event) e
 	// 3. Post-process scaling decisions
 	cl.applyScalingDecisions(scalingDecisions)
 
-	// 4. Compute placement
-	placements := cl.placementEngine.ComputePlacement(ctx, snap, scalingDecisions)
+	// 4. Plan (unified: placement + rebalancing via planner interface)
+	plannerResult, planErr := cl.planner.Plan(ctx, snap, scalingDecisions)
+	if planErr != nil {
+		slog.ErrorContext(ctx, "planner failed", "planner", cl.planner.Name(), "error", planErr)
+		// Continue with empty result — executor will be a no-op with empty plan.
+		plannerResult = ports.PlannerResult{}
+	}
+
+	placements := plannerResult.Decisions
+	migrations := plannerResult.Migrations
 
 	// 5. Persist reservations
 	for _, r := range placements.Reservations {
@@ -237,10 +234,7 @@ func (cl *ControlLoop) runCycle(ctx context.Context, events []ingestion.Event) e
 		}
 	}
 
-	// 6. Rebalancing
-	migrations := cl.rebalancer.FindRebalancingOpportunities(ctx, snap)
-
-	// 7. Generate plan
+	// 6. Generate plan
 	plan := cl.planGenerator.GeneratePlan(ctx, placements, migrations)
 
 	slog.InfoContext(ctx, "plan generated",
@@ -249,9 +243,10 @@ func (cl *ControlLoop) runCycle(ctx context.Context, events []ingestion.Event) e
 		"scale_downs", len(placements.ScaleDowns),
 		"preemptions", len(placements.Preemptions),
 		"migrations", len(migrations),
+		"shadow_slots", len(placements.ClaimedShadowSlots),
 	)
 
-	// 8. Validate
+	// 7. Validate
 	if err := validatePlan(plan, snap); err != nil {
 		outcome := "validation_failure"
 		span.SetAttributes(attribute.String("outcome", outcome))
@@ -261,10 +256,10 @@ func (cl *ControlLoop) runCycle(ctx context.Context, events []ingestion.Event) e
 		return err
 	}
 
-	// 9. Execute
+	// 8. Execute
 	result := cl.executor.Execute(ctx, plan, snap)
 
-	// 10. Determine outcome
+	// 9. Determine outcome
 	outcome := "success"
 	if len(result.Failed) > 0 {
 		outcome = "execution_failure"
@@ -278,7 +273,7 @@ func (cl *ControlLoop) runCycle(ctx context.Context, events []ingestion.Event) e
 		"duration_ms", time.Since(start).Milliseconds(),
 	)
 
-	// 11. Record observability
+	// 10. Record observability
 	durationMs := time.Since(start).Milliseconds()
 	span.SetAttributes(
 		attribute.String("outcome", outcome),
@@ -290,7 +285,7 @@ func (cl *ControlLoop) runCycle(ctx context.Context, events []ingestion.Event) e
 	cl.cyclesTotal.WithLabelValues(outcome).Inc()
 	cl.cycleDuration.Observe(time.Since(start).Seconds())
 
-	// 12. Publish cycle summary and log events
+	// 11. Publish cycle summary and log events
 	summary := cl.buildCycleSummary(events, scalingDecisions, placements, plan, result, snap, durationMs)
 	cl.publishAndLog(ctx, summary, plan, result, placements)
 
