@@ -30,8 +30,21 @@ flowchart TB
             end
 
             SE[Scaling Engine<br/>How many replicas?]
-            PE[Placement Engine<br/>Which cluster, what affinity?]
-            RE[Rebalancing Engine<br/>Consolidate fragmentation]
+
+            subgraph PlannerLayer["Planner Layer  (ports.Planner)"]
+                HP[HeuristicPlanner<br/>default — sequential]
+                SOL[SolverPlanner<br/>CP-SAT joint optimizer<br/>shadow cap pre-pass]
+                SHP[ShadowPlanner<br/>primary hot-path +<br/>shadow goroutine off-path]
+                PE[Placement Engine<br/>Which cluster, what affinity?]
+                RE[Rebalancing Engine<br/>Consolidate fragmentation]
+
+                HP --> PE
+                HP --> RE
+                SHP -.->|primary| HP
+                SHP -.->|shadow goroutine| SOL
+                SOL -.->|fallback on timeout| HP
+            end
+
             PG[Plan Generator<br/>What ops to execute?]
         end
 
@@ -93,17 +106,13 @@ flowchart TB
 
     %% Control Loop orchestrates engines
     CL --> SE
-    CL --> PE
-    CL --> RE
-    CL --> PG
+    CL -->|planner.Plan()| PlannerLayer
 
     %% Scheduler Core flow
     WorldState --> SE
-    WorldState --> PE
-    WorldState --> RE
-    SE --> PE
-    PE --> PG
-    RE --> PG
+    WorldState --> PlannerLayer
+    SE -->|scaling decisions| PlannerLayer
+    PlannerLayer -->|PlannerResult<br/>PlacementDecisions + Migrations| PG
 
     %% Plan Executor
     PG --> EC
