@@ -23,10 +23,13 @@ import (
 	"github.com/hsubbaraj/schedulator/internal/apiserver"
 	"github.com/hsubbaraj/schedulator/internal/configstore"
 	"github.com/hsubbaraj/schedulator/internal/controlloop"
+	"github.com/hsubbaraj/schedulator/internal/engine/heuristic"
 	"github.com/hsubbaraj/schedulator/internal/engine/placement"
 	"github.com/hsubbaraj/schedulator/internal/engine/preemption"
 	"github.com/hsubbaraj/schedulator/internal/engine/rebalancing"
 	"github.com/hsubbaraj/schedulator/internal/engine/scaling"
+	"github.com/hsubbaraj/schedulator/internal/engine/shadow"
+	"github.com/hsubbaraj/schedulator/internal/engine/solver"
 	"github.com/hsubbaraj/schedulator/internal/eventlog"
 	"github.com/hsubbaraj/schedulator/internal/executor"
 	"github.com/hsubbaraj/schedulator/internal/ingestion"
@@ -59,6 +62,86 @@ func newMux(reg *prometheus.Registry) *http.ServeMux {
 	})
 	mux.Handle("/metrics", promhttp.HandlerFor(reg, promhttp.HandlerOpts{}))
 	return mux
+}
+
+// appConfig holds environment-variable-driven configuration for the scheduler.
+type appConfig struct {
+	PlannerMode     string
+	ShadowPlanner   string
+	SolverTimeoutMs int
+	ShadowTimeoutMs int
+	MaxShadowSlots  int
+	SolverSeed      uint64
+}
+
+func loadAppConfig() appConfig {
+	cfg := appConfig{
+		PlannerMode:     getEnvOrDefault("SCHEDULATOR_PLANNER_MODE", "heuristic"),
+		ShadowPlanner:   getEnvOrDefault("SCHEDULATOR_SHADOW_PLANNER", "solver"),
+		SolverTimeoutMs: getEnvIntOrDefault("SCHEDULATOR_SOLVER_TIMEOUT_MS", 200),
+		ShadowTimeoutMs: getEnvIntOrDefault("SCHEDULATOR_SHADOW_TIMEOUT_MS", 500),
+		MaxShadowSlots:  getEnvIntOrDefault("SCHEDULATOR_MAX_SHADOW_SLOTS", 2),
+	}
+	if seed := os.Getenv("SCHEDULATOR_SOLVER_RANDOM_SEED"); seed != "" {
+		if v, err := strconv.ParseUint(seed, 10, 64); err == nil {
+			cfg.SolverSeed = v
+		}
+	}
+	return cfg
+}
+
+func getEnvOrDefault(key, def string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return def
+}
+
+func getEnvIntOrDefault(key string, def int) int {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			return i
+		}
+	}
+	return def
+}
+
+// buildPlanner constructs the active planner based on SCHEDULATOR_PLANNER_MODE.
+func buildPlanner(
+	cfg appConfig,
+	placementEngine *placement.PlacementEngine,
+	rebalancingEngine *rebalancing.RebalancingEngine,
+	tracer trace.Tracer,
+	reg prometheus.Registerer,
+) ports.Planner {
+	solverCfg := solver.DefaultSolverConfig()
+	solverCfg.TimeoutMs = cfg.SolverTimeoutMs
+	solverCfg.MaxShadowSlots = cfg.MaxShadowSlots
+	solverCfg.RandomSeed = cfg.SolverSeed
+
+	heuristicPlanner := heuristic.NewHeuristicPlanner(placementEngine, rebalancingEngine, tracer, reg)
+
+	switch cfg.PlannerMode {
+	case "solver":
+		return solver.NewSolverPlanner(solverCfg, rebalancingEngine, heuristicPlanner, tracer, reg)
+
+	case "shadow":
+		var shadowImpl ports.Planner
+		primary := ports.Planner(heuristicPlanner)
+
+		if cfg.ShadowPlanner == "heuristic" {
+			// Shadow compares solver (primary) vs heuristic (shadow).
+			primary = solver.NewSolverPlanner(solverCfg, rebalancingEngine, heuristicPlanner, tracer, reg)
+			shadowImpl = heuristicPlanner
+		} else {
+			// Default: heuristic primary, solver shadow.
+			shadowImpl = solver.NewSolverPlanner(solverCfg, rebalancingEngine, heuristicPlanner, tracer, reg)
+		}
+		return shadow.NewShadowPlanner(primary, shadowImpl, cfg.ShadowTimeoutMs, tracer, reg)
+
+	default: // "heuristic"
+		return heuristicPlanner
+	}
 }
 
 func run(ctx context.Context, addr string) error {
@@ -183,17 +266,24 @@ func run(ctx context.Context, addr string) error {
 	rebalancingEngine := rebalancing.NewRebalancingEngine(rebalancing.DefaultRebalancingConfig(), tracer, reg)
 
 	// ---------------------------------------------------------------
-	// 8. Create plan generator
+	// 8. Build planner (heuristic, solver, or shadow)
+	// ---------------------------------------------------------------
+	appCfg := loadAppConfig()
+	activePlanner := buildPlanner(appCfg, placementEngine, rebalancingEngine, tracer, reg)
+	slog.Info("planner initialized", "mode", activePlanner.Name())
+
+	// ---------------------------------------------------------------
+	// 9. Create plan generator
 	// ---------------------------------------------------------------
 	planGen := plangen.NewPlanGenerator(tracer, reg)
 
 	// ---------------------------------------------------------------
-	// 9. Create executor
+	// 10. Create executor
 	// ---------------------------------------------------------------
 	exec := executor.NewExecutor(executor.DefaultExecutorConfig(), clusterClients, ws, tracer, reg)
 
 	// ---------------------------------------------------------------
-	// 10. Create ingester
+	// 11. Create ingester
 	// ---------------------------------------------------------------
 	ingester := ingestion.NewIngester(aggregator, cfgStore, ingestion.IngesterConfig{
 		MetricsPollInterval:  30 * time.Second,
@@ -202,7 +292,7 @@ func run(ctx context.Context, addr string) error {
 	}, tracer, reg)
 
 	// ---------------------------------------------------------------
-	// 11. Create API server (before control loop so eventBus is available)
+	// 12. Create API server (before control loop so eventBus is available)
 	// ---------------------------------------------------------------
 	apiSrv := apiserver.New(ws, ingester, eventLog, tracer)
 	apiSrv.SetScalingConfig(scalingCfg)
@@ -216,7 +306,7 @@ func run(ctx context.Context, addr string) error {
 	}
 
 	// ---------------------------------------------------------------
-	// 12. Create control loop
+	// 13. Create control loop
 	// ---------------------------------------------------------------
 	leader := leaderelect.AlwaysLeader{}
 	publisher := &eventBusPublisher{bus: apiSrv.EventBus()}
@@ -224,8 +314,7 @@ func run(ctx context.Context, addr string) error {
 		controlloop.ControlLoopConfig{},
 		ingester,
 		scalingEngine,
-		placementEngine,
-		rebalancingEngine,
+		activePlanner,
 		planGen,
 		exec,
 		ws,
@@ -237,7 +326,7 @@ func run(ctx context.Context, addr string) error {
 	)
 
 	// ---------------------------------------------------------------
-	// 13. Build HTTP mux
+	// 14. Build HTTP mux
 	// ---------------------------------------------------------------
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -254,7 +343,7 @@ func run(ctx context.Context, addr string) error {
 	}
 
 	// ---------------------------------------------------------------
-	// 14. Start control loop in background
+	// 15. Start control loop in background
 	// ---------------------------------------------------------------
 	loopErrCh := make(chan error, 1)
 	go func() {
@@ -280,7 +369,7 @@ func run(ctx context.Context, addr string) error {
 	}()
 
 	// ---------------------------------------------------------------
-	// 15. Start HTTP server
+	// 16. Start HTTP server
 	// ---------------------------------------------------------------
 	httpErrCh := make(chan error, 1)
 	go func() {

@@ -43,6 +43,12 @@ func NewPlanGenerator(tracer trace.Tracer, reg prometheus.Registerer) *PlanGener
 // decisions. Operations are ordered: preemptions → scale-downs → scale-ups →
 // migration pairs. Scale-ups depend on preemption ops in the same cluster.
 // Migration scale-downs depend on their paired scale-up.
+//
+// Shadow slot handling: any ClaimedShadowSlots in decisions are converted to
+// MigrateDecisions and prepended to migrations before Phase 4. Scale-ups
+// targeting the same cluster as a shadow slot's SourceClusterID additionally
+// depend on the shadow migration's scale-up completing first (blue-green
+// sequencing ensures capacity is available before the scale-up runs).
 func (g *PlanGenerator) GeneratePlan(
 	ctx context.Context,
 	decisions model.PlacementDecisions,
@@ -51,6 +57,41 @@ func (g *PlanGenerator) GeneratePlan(
 	ctx, span := g.tracer.Start(ctx, "plangen.generate")
 	defer span.End()
 	start := time.Now()
+
+	// Pre-processing: convert ClaimedShadowSlots → MigrateDecisions.
+	// Shadow migrations are prepended so their scale-up IDs are computed
+	// before Phase 3 (which needs them for dependency wiring).
+	shadowMigrateCount := len(decisions.ClaimedShadowSlots)
+	if shadowMigrateCount > 0 {
+		extra := make([]model.MigrateDecision, 0, shadowMigrateCount)
+		for _, slot := range decisions.ClaimedShadowSlots {
+			extra = append(extra, model.MigrateDecision{
+				AppID:                 slot.VictimAppID,
+				SourceReplicaID:       slot.VictimReplicaID,
+				TargetClusterID:       slot.DestClusterID,
+				SchedulingConstraints: slot.DestConstraints,
+			})
+		}
+		// Shadow migrations come first so their ops are identified early.
+		migrations = append(extra, migrations...)
+	}
+
+	// Pre-compute shadow migration scale-up IDs so Phase 3 can wire
+	// dependencies before the Phase 4 loop actually creates the operations.
+	// shadowMigrationScaleUpIDFor maps SlotID → OperationID for the
+	// scale-up half of each shadow migration.
+	shadowMigrationScaleUpIDFor := make(map[string]model.OperationID, shadowMigrateCount)
+	for i, slot := range decisions.ClaimedShadowSlots {
+		// Assign a stable ID based on index (matches the prepended migrations).
+		_ = i
+		shadowMigrationScaleUpIDFor[slot.SlotID] = model.OperationID(uuid.New().String())
+	}
+	// Build a lookup: SourceClusterID → scale-up OperationID (one per slot).
+	shadowClusterScaleUpIDs := make(map[model.ClusterID][]model.OperationID)
+	for _, slot := range decisions.ClaimedShadowSlots {
+		id := shadowMigrationScaleUpIDFor[slot.SlotID]
+		shadowClusterScaleUpIDs[slot.SourceClusterID] = append(shadowClusterScaleUpIDs[slot.SourceClusterID], id)
+	}
 
 	// Track preemption op IDs per cluster for dependency linking.
 	clusterPreemptionOps := make(map[model.ClusterID][]model.OperationID)
@@ -76,24 +117,46 @@ func (g *PlanGenerator) GeneratePlan(
 		})
 	}
 
-	// Phase 3: Scale-ups (depend on preemptions in the same cluster).
+	// Phase 3: Scale-ups (depend on preemptions + shadow migrations in the
+	// same cluster).
 	for _, su := range decisions.ScaleUps {
 		op := model.Operation{
 			ID:      model.OperationID(uuid.New().String()),
 			Type:    model.OperationScaleUp,
 			Payload: su,
 		}
+
+		// Depend on preemptions in the same cluster.
 		if deps := clusterPreemptionOps[su.ClusterID]; len(deps) > 0 {
 			op.DependsOn = make([]model.OperationID, len(deps))
 			copy(op.DependsOn, deps)
 		}
+
+		// Depend on shadow migration scale-ups in the same cluster
+		// (capacity isn't released until the victim migrates away).
+		if shadowDeps := shadowClusterScaleUpIDs[su.ClusterID]; len(shadowDeps) > 0 {
+			op.DependsOn = append(op.DependsOn, shadowDeps...)
+		}
+
 		ops = append(ops, op)
 	}
 
 	// Phase 4: Migrations — decompose each into scale-up + scale-down pair.
 	// The scale-down depends on the scale-up completing first (blue-green).
-	for _, m := range migrations {
-		suID := model.OperationID(uuid.New().String())
+	// Shadow migrations come first in the migrations slice (prepended above),
+	// so we reuse the pre-assigned IDs for them.
+	shadowSlotIndex := 0
+	for i, m := range migrations {
+		var suID model.OperationID
+		if i < shadowMigrateCount {
+			// Use the pre-assigned ID for shadow migrations so Phase 3
+			// dependencies resolve correctly.
+			slot := decisions.ClaimedShadowSlots[shadowSlotIndex]
+			suID = shadowMigrationScaleUpIDFor[slot.SlotID]
+			shadowSlotIndex++
+		} else {
+			suID = model.OperationID(uuid.New().String())
+		}
 		sdID := model.OperationID(uuid.New().String())
 
 		suOp := model.Operation{
@@ -139,6 +202,7 @@ func (g *PlanGenerator) GeneratePlan(
 		attribute.Int("scale_downs", scaleDownCount),
 		attribute.Int("scale_ups", scaleUpCount),
 		attribute.Int("migrations", migrateCount),
+		attribute.Int("shadow_migrations", shadowMigrateCount),
 	)
 
 	_ = ctx // span already uses ctx; suppress unused warning in future refactors.
