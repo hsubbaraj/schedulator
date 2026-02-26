@@ -2,6 +2,10 @@
 
 A global GPU scheduler for LLM inference workloads across a fleet of Kubernetes clusters. Schedulator monitors cluster state, makes scaling and placement decisions, handles preemption and rebalancing, and executes plans — all visible through a real-time browser dashboard.
 
+Some todos:
+- [] Right now, the schedulator controls each replica at a pod level due to preferredNodes provided as input. This isn't super K8s native, so exploring setting preferredNodes for an entire deployment instead of each replica makes sense (or write custom CRD to do this).
+- [] Explore a CP-SAT solver for the pre-emption+placement problem. There's a formulation of the problem in a branch, but there aren't stable Go bindings for Google's OR tools CP-SAT solver and no native CP-SAT solver in Go that I could quickly find. I'm sure there's a way around this, just haven't gotten around to it. Also unsure there's a big need if the heuristic method is good enough. Look at branch claude/implement-solver-spec-T4eiB for more details.
+
 ## Prerequisites
 
 - **Go 1.25+**
