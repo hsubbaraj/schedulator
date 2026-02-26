@@ -9,6 +9,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/hsubbaraj/schedulator/internal/engine/engineutil"
 	"github.com/hsubbaraj/schedulator/internal/observability"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
 	"github.com/hsubbaraj/schedulator/pkg/model"
@@ -62,10 +63,10 @@ type ScalingEngine struct {
 	cfg    ScalingConfig
 	tracer trace.Tracer
 
-	targetReplicasGauge   *prometheus.GaugeVec
-	decisionsCounter      *prometheus.CounterVec
-	computeDuration       prometheus.Histogram
-	stabilitySuppressed   *prometheus.CounterVec
+	targetReplicasGauge *prometheus.GaugeVec
+	decisionsCounter    *prometheus.CounterVec
+	computeDuration     prometheus.Histogram
+	stabilitySuppressed *prometheus.CounterVec
 }
 
 // NewScalingEngine creates a ScalingEngine with the given config,
@@ -269,8 +270,8 @@ func (e *ScalingEngine) computeEffectiveTarget(
 	if hasProfile && profile.ColdStartSeconds > 0 {
 		expectedStartup := time.Duration(profile.ColdStartSeconds*2) * time.Second
 		stalePending := 0
-		for _, r := range snap.Replicas {
-			if r.AppID != app.AppID || r.Status != model.ReplicaStatusPending {
+		for _, r := range engineutil.ReplicasForApp(snap, app.AppID) {
+			if r.Status != model.ReplicaStatusPending {
 				continue
 			}
 			if r.CreatedAt.IsZero() {
@@ -389,8 +390,8 @@ func isSLABreach(app model.Application, metrics model.VLLMMetrics) bool {
 // countReplicasByStatus counts replicas for an app with the given status.
 func countReplicasByStatus(appID model.AppID, snap worldstate.WorldStateSnapshot, status model.ReplicaStatus) int {
 	count := 0
-	for _, r := range snap.Replicas {
-		if r.AppID == appID && r.Status == status {
+	for _, r := range engineutil.ReplicasForApp(snap, appID) {
+		if r.Status == status {
 			count++
 		}
 	}

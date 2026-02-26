@@ -14,12 +14,23 @@ type WorldStateSnapshot struct {
 	Clusters            map[model.ClusterID]model.Cluster
 	Applications        map[model.AppID]model.Application
 	Replicas            map[model.ReplicaID]model.Replica
+	ReplicasByApp       map[model.AppID][]model.Replica
 	CacheLocations      map[model.ModelID][]model.CacheLocation
 	PerformanceProfiles map[model.AppID]model.PerformanceProfile
 	VLLMMetrics         map[model.AppID]model.VLLMMetrics
 	Reservations        map[model.ReservationID]model.GPUReservation
 	ScalingHistory      map[model.AppID]model.ScalingHistory
 	TakenAt             time.Time
+}
+
+// buildReplicasByApp constructs an AppID -> []Replica secondary index from a
+// snapshot's cloned replica map.
+func buildReplicasByApp(replicas map[model.ReplicaID]model.Replica) map[model.AppID][]model.Replica {
+	idx := make(map[model.AppID][]model.Replica, max(1, len(replicas)/4))
+	for _, r := range replicas {
+		idx[r.AppID] = append(idx[r.AppID], r)
+	}
+	return idx
 }
 
 // copyClusters deep-copies the clusters map including nested Nodes, Pods

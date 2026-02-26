@@ -100,6 +100,9 @@ func (ws *WorldState) Snapshot(ctx context.Context) WorldStateSnapshot {
 	}
 	ws.mu.RUnlock()
 
+	// Build app index from the cloned replicas map outside the lock.
+	snap.ReplicasByApp = buildReplicasByApp(snap.Replicas)
+
 	duration := time.Since(start)
 	ws.snapshotHistogram.Observe(duration.Seconds())
 

@@ -80,7 +80,7 @@ func baseNode(id, clusterID string, totalGPUs, freeGPUs int) model.Node {
 }
 
 func addReplica(snap *worldstate.WorldStateSnapshot, id, appID, clusterID, nodeID string, gpus int) {
-	snap.Replicas[id] = model.Replica{
+	r := model.Replica{
 		ReplicaID: id,
 		AppID:     appID,
 		ClusterID: clusterID,
@@ -97,6 +97,7 @@ func addReplica(snap *worldstate.WorldStateSnapshot, id, appID, clusterID, nodeI
 			snap.Clusters[clusterID] = cluster
 		}
 	}
+	snap.Replicas[id] = r
 }
 
 // ---------- FindRebalancingOpportunities ----------
