@@ -10,6 +10,7 @@ A global GPU scheduler for LLM inference workloads across a fleet of Kubernetes 
 - **kubectl**
 - **KWOK** — Kubernetes Without Kubelet, for simulating GPU nodes ([install](https://kwok.sigs.k8s.io/docs/user/install/))
 - **jq** (used by the launch script)
+- **OR-Tools** _(optional, solver backend only)_ — Google OR-Tools C++ library with Go bindings ([releases](https://github.com/google/or-tools/releases)). Required only when building with `-tags solver`. The default heuristic planner has no extra dependencies.
 
 ## Project Structure
 
@@ -22,6 +23,9 @@ internal/
     placement/           # which cluster, what affinity?
     preemption/          # preemption cascade logic
     rebalancing/         # consolidate fragmentation
+    heuristic/           # HeuristicPlanner — wraps placement + rebalancing
+    solver/              # SolverPlanner — CP-SAT joint optimizer (build tag: solver)
+    shadow/              # ShadowPlanner — A/B comparison wrapper
   ingestion/             # event ingestion (informers, config watch, timers)
   executor/              # plan executor (orders ops, tracks in-flight)
   plangen/               # plan generator
@@ -65,11 +69,23 @@ If you want more control over the setup, you can run each step yourself.
 
 ### 1. Build
 
+**Standard build** (heuristic planner only, no CGo required):
+
 ```bash
 make build
 # or
 CGO_ENABLED=0 go build -o bin/schedulator ./cmd/schedulator/
 ```
+
+**Solver-enabled build** (requires OR-Tools installed and CGo):
+
+```bash
+make build-solver
+# or
+CGO_ENABLED=1 go build -tags solver -o bin/schedulator ./cmd/schedulator/
+```
+
+The solver build tag gates all OR-Tools imports behind `//go:build solver`. A binary built without the tag still accepts `SCHEDULATOR_PLANNER_MODE=solver` at runtime — it will log a warning and fall back to the heuristic planner automatically.
 
 ### 2. Build the Dashboard
 
@@ -147,6 +163,33 @@ Open **http://localhost:8080** for the dashboard.
 | `STATIC_DIR` | `web/dist` | Directory containing built dashboard static files. |
 | `SCHEDULATOR_NAMESPACE` | `default` | Kubernetes namespace to watch for managed pods. |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | — | OTLP gRPC endpoint for distributed tracing. Tracing is disabled if unset. |
+
+**Planner selection** (no rebuild required — switch at runtime):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SCHEDULATOR_PLANNER_MODE` | `heuristic` | Active planner: `heuristic`, `solver`, or `shadow`. |
+| `SCHEDULATOR_SOLVER_TIMEOUT_MS` | `200` | CP-SAT wall-clock budget per scheduling cycle (ms). |
+| `SCHEDULATOR_MAX_SHADOW_SLOTS` | `2` | Maximum blue-green migrations the solver may commit per cycle. |
+| `SCHEDULATOR_SOLVER_RANDOM_SEED` | `0` | Solver RNG seed. `0` = non-deterministic; any other value = reproducible. |
+| `SCHEDULATOR_SHADOW_PLANNER` | `solver` | Which backend runs as the shadow when `mode=shadow`. |
+| `SCHEDULATOR_SHADOW_TIMEOUT_MS` | `500` | Deadline for the shadow goroutine (ms). Never blocks the hot path. |
+
+**Planner mode examples:**
+
+```bash
+# Default — heuristic (sequential placement + rebalancing):
+./bin/schedulator
+
+# CP-SAT solver — joint optimization of placement and preemption:
+SCHEDULATOR_PLANNER_MODE=solver ./bin/schedulator
+
+# Shadow mode — heuristic on hot path, solver runs off-path for A/B comparison:
+SCHEDULATOR_PLANNER_MODE=shadow ./bin/schedulator
+
+# Deterministic solver (fixed seed, useful for debugging):
+SCHEDULATOR_PLANNER_MODE=solver SCHEDULATOR_SOLVER_RANDOM_SEED=42 ./bin/schedulator
+```
 
 ## Manipulating the System
 
@@ -311,14 +354,13 @@ curl -s "http://localhost:8080/api/v1/snapshots?cluster_id=cluster-1&since=$(dat
 ## Testing
 
 ```bash
-# Run all unit tests (CGO_ENABLED=0 required on Mac)
-CGO_ENABLED=0 go test ./...
-
-# Run with race detector (Linux/CI)
-go test -race ./...
-
-# Run via Makefile
+# Run all unit tests — no OR-Tools required
 make test
+# or: CGO_ENABLED=0 go test -race ./...
+
+# Solver constraint and property tests — requires OR-Tools
+make test-solver
+# or: CGO_ENABLED=1 go test -race -tags solver ./internal/engine/solver/...
 
 # Integration tests (requires Kind clusters)
 make test-integration
@@ -332,6 +374,7 @@ make lint
 See `docs/` for detailed design documentation:
 
 - `docs/multi-cluster-gpu-scheduler-proposal-v2.md` — full design proposal with algorithms
+- `docs/solver-spec.md` — Planner abstraction and CP-SAT solver specification
 - `docs/01-architecture-overview.mermaid` — system architecture diagram
 - `docs/05-data-model.mermaid` — domain model
 - `docs/06-placement-engine-flow.mermaid` — placement and preemption flow
