@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/hsubbaraj/schedulator/internal/engine/engineutil"
 	"github.com/hsubbaraj/schedulator/internal/engine/scaling"
 	"github.com/hsubbaraj/schedulator/internal/observability"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
@@ -237,8 +238,8 @@ func (e *PlacementEngine) findBestCluster(
 	spreadLimit := 0
 	if app.FailureDomainRule == model.FailureDomainSpreadClusters && len(eligibleClusters) > 0 {
 		targetCount := 0
-		for _, r := range snap.Replicas {
-			if r.AppID == app.AppID && (r.Status == model.ReplicaStatusRunning || r.Status == model.ReplicaStatusPending) {
+		for _, r := range engineutil.ReplicasForApp(snap, app.AppID) {
+			if r.Status == model.ReplicaStatusRunning || r.Status == model.ReplicaStatusPending {
 				targetCount++
 			}
 		}
@@ -333,13 +334,7 @@ func (e *PlacementEngine) computeReservationTTL(appID model.AppID, snap worldsta
 
 // countActiveReplicas counts running or pending replicas for an app.
 func countActiveReplicas(appID model.AppID, snap worldstate.WorldStateSnapshot) int {
-	count := 0
-	for _, r := range snap.Replicas {
-		if r.AppID == appID && (r.Status == model.ReplicaStatusRunning || r.Status == model.ReplicaStatusPending) {
-			count++
-		}
-	}
-	return count
+	return engineutil.CountActiveReplicas(snap, appID)
 }
 
 // hasFittingNode returns true if any ready node in the cluster has at least
@@ -393,8 +388,8 @@ func clusterAvailableGPUs(
 // specific cluster.
 func countAppReplicasInCluster(appID model.AppID, clusterID model.ClusterID, snap worldstate.WorldStateSnapshot) int {
 	count := 0
-	for _, r := range snap.Replicas {
-		if r.AppID == appID && r.ClusterID == clusterID &&
+	for _, r := range engineutil.ReplicasForApp(snap, appID) {
+		if r.ClusterID == clusterID &&
 			(r.Status == model.ReplicaStatusRunning || r.Status == model.ReplicaStatusPending) {
 			count++
 		}

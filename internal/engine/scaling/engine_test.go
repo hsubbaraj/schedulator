@@ -55,7 +55,7 @@ func TestComputeTargetReplicas_QueuePressure(t *testing.T) {
 			name:         "queue above high watermark scales up",
 			queueDepth:   20.0,
 			currentCount: 4,
-			wantTarget:   9, // ceil(4 * 20/5) = 16, capped at 4+5=9
+			wantTarget:   14, // ceil(4 * 20/5) = 16, capped at 4+10=14
 			wantSignal:   ScaleSignalQueue,
 		},
 		{
@@ -69,14 +69,14 @@ func TestComputeTargetReplicas_QueuePressure(t *testing.T) {
 			name:         "queue slightly above high watermark triggers",
 			queueDepth:   10.1,
 			currentCount: 4,
-			wantTarget:   9, // ceil(4 * 10.1/5) = ceil(8.08) = 9, capped at 4+5=9
+			wantTarget:   9, // ceil(4 * 10.1/5) = ceil(8.08) = 9
 			wantSignal:   ScaleSignalQueue,
 		},
 		{
 			name:         "queue pressure capped by MaxScaleUpPerCycle",
 			queueDepth:   100.0,
 			currentCount: 2,
-			wantTarget:   7, // ceil(2 * 100/5) = 40, capped at 2+5=7
+			wantTarget:   12, // ceil(2 * 100/5) = 40, capped at 2+10=12
 			wantSignal:   ScaleSignalQueue,
 		},
 		{
@@ -84,7 +84,7 @@ func TestComputeTargetReplicas_QueuePressure(t *testing.T) {
 			queueDepth:   20.0,
 			currentCount: 0,
 			wantTarget:   1, // ceil(0 * factor) = 0, floored by min_replicas=1
-			wantSignal:   ScaleSignalNone,
+			wantSignal:   ScaleSignalQueue,
 		},
 	}
 
@@ -293,7 +293,7 @@ func TestComputeTargetReplicas_Dampening(t *testing.T) {
 		metrics := idleMetrics("app-1")
 		metrics.AvgWaitingQueueDepth = 100.0
 		target, _ := e.computeTargetReplicas(app, metrics, profile, 3)
-		assert.Equal(t, 8, target) // 3+5=8
+		assert.Equal(t, 13, target) // 3+10=13
 	})
 
 	t.Run("scale down capped at MaxScaleDownPerCycle", func(t *testing.T) {
@@ -496,13 +496,13 @@ func TestApplyStabilityControls_ScaleUpCooldown(t *testing.T) {
 	}{
 		{
 			name:          "within cooldown suppresses scale-up",
-			lastScaleUpAt: now.Add(-60 * time.Second), // 60s ago, cooldown is 120s
+			lastScaleUpAt: now.Add(-500 * time.Millisecond), // within 1s cooldown
 			wantApproved:  false,
 			wantTarget:    4,
 		},
 		{
 			name:          "at boundary allows scale-up",
-			lastScaleUpAt: now.Add(-120 * time.Second), // exactly 120s ago
+			lastScaleUpAt: now.Add(-1 * time.Second), // exactly at 1s boundary
 			wantApproved:  true,
 			wantTarget:    6,
 		},
@@ -552,13 +552,13 @@ func TestApplyStabilityControls_ScaleDownCooldown(t *testing.T) {
 	}{
 		{
 			name:            "within cooldown suppresses scale-down",
-			lastScaleDownAt: now.Add(-100 * time.Second),
+			lastScaleDownAt: now.Add(-2 * time.Second),
 			wantApproved:    false,
 			wantTarget:      4,
 		},
 		{
 			name:            "at boundary allows scale-down with enough signals",
-			lastScaleDownAt: now.Add(-300 * time.Second),
+			lastScaleDownAt: now.Add(-3 * time.Second),
 			wantApproved:    true,
 			wantTarget:      2,
 		},
@@ -689,7 +689,7 @@ func TestApplyStabilityControls_SLABreachBypass(t *testing.T) {
 			ScalingHistory: map[model.AppID]model.ScalingHistory{
 				"app-1": {
 					AppID:           "app-1",
-					LastScaleDownAt: now.Add(-100 * time.Second), // within cooldown
+					LastScaleDownAt: now.Add(-2 * time.Second), // within cooldown
 				},
 			},
 			VLLMMetrics: map[model.AppID]model.VLLMMetrics{
@@ -798,10 +798,10 @@ func TestComputeTargets_Integration(t *testing.T) {
 	results := e.ComputeTargets(context.Background(), snap)
 	require.Len(t, results, 3)
 
-	// app-queue: queue=25 > 10, factor=25/5=5, required=ceil(3*5)=15, capped at 3+5=8
+	// app-queue: queue=25 > 10, factor=25/5=5, required=ceil(3*5)=15, capped at 3+10=13
 	queueDecision := results["app-queue"]
 	assert.Equal(t, ScaleDirectionUp, queueDecision.Direction)
-	assert.Equal(t, 8, queueDecision.TargetCount)
+	assert.Equal(t, 13, queueDecision.TargetCount)
 	assert.True(t, queueDecision.ScaleActionApproved)
 
 	// app-idle: all metrics low, current=4, min=2

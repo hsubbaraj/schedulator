@@ -11,6 +11,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/hsubbaraj/schedulator/internal/engine/engineutil"
 	"github.com/hsubbaraj/schedulator/internal/observability"
 	"github.com/hsubbaraj/schedulator/internal/worldstate"
 	"github.com/hsubbaraj/schedulator/pkg/model"
@@ -84,23 +85,22 @@ func (e *PreemptionEngine) FindPreemptionOpportunity(
 	// Build candidate pools: only running/pending replicas of strictly lower
 	// priority (higher Priority int) apps.
 	var p2Candidates, p1Candidates []victimCandidate
-	for _, r := range snap.Replicas {
-		if r.Status != model.ReplicaStatusRunning && r.Status != model.ReplicaStatusPending {
+	for victimAppID, victimApp := range snap.Applications {
+		if victimAppID == app.AppID || victimApp.Priority <= app.Priority {
 			continue
 		}
-		victimApp, ok := snap.Applications[r.AppID]
-		if !ok || r.AppID == app.AppID {
-			continue
-		}
-		if victimApp.Priority <= app.Priority {
-			continue
-		}
-		vc := victimCandidate{replica: r, app: victimApp}
-		switch victimApp.Priority {
-		case 2:
-			p2Candidates = append(p2Candidates, vc)
-		case 1:
-			p1Candidates = append(p1Candidates, vc)
+
+		for _, r := range engineutil.ReplicasForApp(snap, victimAppID) {
+			if r.Status != model.ReplicaStatusRunning && r.Status != model.ReplicaStatusPending {
+				continue
+			}
+			vc := victimCandidate{replica: r, app: victimApp}
+			switch victimApp.Priority {
+			case 2:
+				p2Candidates = append(p2Candidates, vc)
+			case 1:
+				p1Candidates = append(p1Candidates, vc)
+			}
 		}
 	}
 
@@ -182,7 +182,7 @@ func (e *PreemptionEngine) selectVictims(
 		}
 
 		// min_replicas protection.
-		activeCount := countActiveReplicas(c.app.AppID, snap)
+		activeCount := engineutil.CountActiveReplicas(snap, c.app.AppID)
 		if activeCount-preemptingPerApp[c.app.AppID] <= c.app.MinReplicas {
 			log.Printf("[DEBUG] Preemption: skip %s (active=%d preempting=%d min=%d)",
 				c.replica.ReplicaID, activeCount, preemptingPerApp[c.app.AppID], c.app.MinReplicas)
@@ -252,7 +252,7 @@ func sortCandidates(candidates []victimCandidate, gpusNeeded int, snap worldstat
 // aboveMinOrder returns 0 if the app has replicas above min_replicas (prefer
 // these first), 1 if at or below min_replicas.
 func aboveMinOrder(c victimCandidate, snap worldstate.WorldStateSnapshot) int {
-	active := countActiveReplicas(c.app.AppID, snap)
+	active := engineutil.CountActiveReplicas(snap, c.app.AppID)
 	if active > c.app.MinReplicas {
 		return 0
 	}
@@ -266,15 +266,4 @@ func packingBenefit(replicaGPUs, gpusNeeded int) float64 {
 		return 1.0
 	}
 	return 1.0 / (1.0 + math.Abs(float64(replicaGPUs-gpusNeeded)))
-}
-
-// countActiveReplicas counts running or pending replicas for an app.
-func countActiveReplicas(appID model.AppID, snap worldstate.WorldStateSnapshot) int {
-	count := 0
-	for _, r := range snap.Replicas {
-		if r.AppID == appID && (r.Status == model.ReplicaStatusRunning || r.Status == model.ReplicaStatusPending) {
-			count++
-		}
-	}
-	return count
 }

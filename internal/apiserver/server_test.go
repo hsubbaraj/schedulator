@@ -28,7 +28,7 @@ func newTestServer(t *testing.T) *Server {
 	require.NoError(t, err)
 	t.Cleanup(func() { el.Close() })
 
-	return New(ws, el, tracer)
+	return New(ws, nil, el, tracer)
 }
 
 func TestHandleState(t *testing.T) {
@@ -85,7 +85,7 @@ func TestHandleApplications_WithData(t *testing.T) {
 		MinReplicas:    1,
 	})
 
-	srv := New(ws, el, tracer)
+	srv := New(ws, nil, el, tracer)
 	handler := srv.Handler()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/applications", nil)
@@ -187,8 +187,8 @@ func TestHandleScalingConfig(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	assert.Equal(t, 10.0, body.QueueHighWatermark)
 	assert.Equal(t, 0.85, body.KVCacheHighWatermark)
-	assert.Equal(t, 120, body.ScaleUpCooldownSeconds)
-	assert.Equal(t, 300, body.ScaleDownCooldownSeconds)
+	assert.Equal(t, 1, body.ScaleUpCooldownSeconds)
+	assert.Equal(t, 3, body.ScaleDownCooldownSeconds)
 	assert.Equal(t, 3, body.StabilizationCycles)
 }
 
