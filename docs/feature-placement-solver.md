@@ -102,3 +102,37 @@ To avoid "Fleet Jitter," we use **Warm Starting**. The solver is provided with t
 
 ## 7. Performance Expectation
 For a fleet of 100 apps and 500 nodes, the search space is large but highly constrained. Modern solvers like CP-SAT can find a solution within 10% of global optimality in **< 300ms** for problems of this scale, which is well within our control loop requirements.
+
+---
+
+## 8. Open Concerns & Prerequisites
+
+This section documents unresolved concerns that must be addressed before implementation begins.
+
+### 8.1 Latency Bound is Unsubstantiated
+
+Section 7 asserts "< 300ms for 100 apps and 500 nodes" without a benchmark. The claim depends heavily on problem structure. CP-SAT is NP-Hard; the 200ms time-box returns "best found so far," which under high constraint pressure may be the trivially feasible initial solution with no improvement over the current heuristic. The failure scenario — a full cluster going down, triggering mass preemption — is exactly when fast decisions are most critical and exactly when the MIP problem is most constrained. **A benchmark on realistic problem instances (including a simulated cluster failure) must be run before this design is committed to.**
+
+### 8.2 Migration is Modeled Incorrectly
+
+The decision variable $m_r \in \{0, 1\}$ treats migration as instantaneous. In reality, migration is blue-green: a new replica is started, confirmed running, and only then is the old replica deleted. During the intermediate state, both replicas consume GPU capacity simultaneously. The solver's capacity accounting does not model this, so it may approve migrations that are individually feasible but collectively exhaust cluster capacity when inflight. The existing `RebalancingEngine` handles this correctly by treating migration as two separate ordered operations. **The formulation must either model two-phase migration correctly or restrict $m_r$ to be handled outside the solver, as it is today.**
+
+### 8.3 Weight Calibration Has No Feedback Loop
+
+The proposed weights span six orders of magnitude ($1{,}000{,}000$ to $100$). These values encode priorities but are not derived from measurement. As fleet composition changes — adding apps, changing GPU block sizes, adjusting `min_replicas` — the correct weights may shift. There is no proposed mechanism for detecting that weights are producing suboptimal outcomes, nor a process for tuning them. With the heuristic, a bad placement decision is traceable to a scoring function (e.g., "cache score of cluster-A was 1000 vs. cluster-B's 500"). With MIP, the explanation is "the solver found this globally optimal assignment given these weights," which is correct but operationally undebuggable. **A weight validation strategy — ideally using the simulator's scorecard as a feedback signal — should be defined before weights are treated as production constants.**
+
+### 8.4 Test Precision is Weakened
+
+The current heuristic engines are fully deterministic: given a fixed `WorldStateSnapshot`, they produce the same placement every time. This enables precise table-driven tests asserting exact replica-to-cluster assignments. CP-SAT output depends on the solver's internal search state; while it can be made deterministic via a fixed `random_seed`, test assertions must shift from "replica R goes to cluster C" to "all constraints are satisfied." This is a weaker guarantee and makes behavioral regressions harder to detect. **Test strategy for the solver — including what a meaningful constraint-satisfaction test looks like for preemption and spread cases — should be designed before implementation.**
+
+### 8.5 The O(R) Scan Problem Should Be Fixed First, Independently
+
+Section 2.1 correctly identifies redundant linear replica scans as the primary performance bottleneck. This problem exists regardless of whether the solver is adopted; in fact, building an efficient MIP model requires the same indexed data structures. Indexing replicas by `AppID` in `WorldStateSnapshot` is a self-contained change that eliminates the bottleneck, improves the heuristic path, and is a prerequisite for efficient solver model construction. **This should be implemented as a standalone change before any solver work begins.**
+
+### 8.6 Recommended Sequencing
+
+1. Add `ReplicasByApp map[model.AppID][]model.Replica` index to `WorldStateSnapshot` and eliminate all `O(R)` scans.
+2. Fix sequential lag by computing rebalancing candidates before placement and exposing releasable capacity to `findBestCluster`.
+3. Benchmark CP-SAT on the simulator's `cluster_failure` and `preemption` scenarios to validate the 200ms latency claim.
+4. Resolve the blue-green migration modeling gap.
+5. Define a weight validation strategy using the simulator scorecard.
