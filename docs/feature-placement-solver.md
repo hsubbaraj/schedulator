@@ -136,3 +136,17 @@ Section 2.1 correctly identifies redundant linear replica scans as the primary p
 3. Benchmark CP-SAT on the simulator's `cluster_failure` and `preemption` scenarios to validate the 200ms latency claim.
 4. Resolve the blue-green migration modeling gap.
 5. Define a weight validation strategy using the simulator scorecard.
+
+## 9. Recommendation (Rejected)
+
+While a constrained linear solver is an elegant mathematical concept, **it is not the right approach for this specific problem.**
+
+The combination of the blue-green migration requirement, the strict latency bounds under pressure, and the need for operational debuggability makes a solver a dangerous choice for the core control loop.
+
+Instead of a solver, the project should implement an **Enhanced Heuristic** approach to solve the identified flaws:
+
+1. **Fix Greedy Myopia via Batch Sorting:** Instead of placing replicas in the order they happen to be processed, group all pending `ScaleUpDecisions` for the current cycle and sort them by Priority (ASC) then Requested GPUs (DESC). Placing the largest blocks first naturally packs the cluster perfectly.
+2. **Fix Sequential Lag via Shadow Capacity:** Run a "Candidate Generation" pass before Placement to identify fragmented nodes. Flag that remaining capacity as "Shadow Capacity." If Placement claims this capacity, it automatically emits a `MigrateDecision` for the smaller replica.
+3. **Fix the O(R) Scan Bottleneck:** Index the `WorldStateSnapshot` by `AppID` to change replica lookups from an $O(R)$ linear scan to an $O(1)$ map lookup.
+
+**Final Decision:** Do not use the MIP solver. Keep the deterministic, fast procedural engine as mandated by the project instructions, and implement the Enhanced Heuristic improvements.
