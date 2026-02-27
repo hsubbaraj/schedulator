@@ -214,17 +214,16 @@ func BuildAndSolve(
 	// -----------------------------------------------------------------------
 	// Create placement variables (x[r][n] and y[r][k]) and unmet variables
 	// -----------------------------------------------------------------------
-	for ri, rep := range newReplicas {
+	for ri := range newReplicas {
 		xVars[ri] = make(map[string]cpmodel.BoolVar)
 		yVars[ri] = make(map[int]cpmodel.BoolVar)
 
 		// x[r][n] for each ready node
-		for cid, cluster := range snap.Clusters {
+		for _, cluster := range snap.Clusters {
 			for nid, node := range cluster.Nodes {
 				if node.Status != model.NodeStatusReady {
 					continue
 				}
-				_ = cid
 				xv := m.NewBoolVar()
 				xVars[ri][nid] = xv
 			}
@@ -330,7 +329,11 @@ func BuildAndSolve(
 	// -----------------------------------------------------------------------
 	// C1b — Cluster-level shadow capacity
 	// Σ_{r,n∈c} x[r][n] × GPUs + Σ_{r,k:src==c} y[r][k] × GPUs
-	//   ≤ clusterFree[c] + Σ_{k:src==c} s[k] × ReleasableGPUs
+	//   ≤ clusterFree[c] + Σ_{v∈c} p[v]×v.GPUs + Σ_{k:src==c} s[k] × ReleasableGPUs
+	//
+	// NOTE: preemption slack must be included here (as it is in C1) so that
+	// cluster-level accounting does not over-restrict placement when victims
+	// exist on nodes in the cluster.
 	// -----------------------------------------------------------------------
 	for cid := range snap.Clusters {
 		lhs := cpmodel.NewLinearExpr()
@@ -347,6 +350,12 @@ func BuildAndSolve(
 			}
 		}
 		rhs := cpmodel.NewLinearExpr().AddConstant(int64(clusterFreeGPUs[cid]))
+		// Add preemption slack: GPUs freed by preempting victims in this cluster.
+		for _, vc := range preemptCandidates {
+			if vc.clusterID == cid {
+				rhs.AddTerm(pVars[vc.replicaID], int64(vc.gpus))
+			}
+		}
 		for k, slot := range shadowSlots {
 			if slot.SourceClusterID == cid {
 				rhs.AddTerm(sVars[k], int64(slot.ReleasableGPUs))
